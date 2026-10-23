@@ -26,7 +26,7 @@ app = FastAPI(
 
 # Nunca guardar la contraseña de Supabase dentro de este archivo.
 # En Windows, antes de iniciar la API, configurar DATABASE_URL en el entorno.
-DATABASE_URL = ""
+DATABASE_URL = "postgresql://postgres.ciohdzojeekegzxaepyu:xM2Adp11T1dVt4At@aws-0-us-east-1.pooler.supabase.com:5432/postgres"
 
 
 def obtener_conexion():
@@ -745,7 +745,7 @@ def consultar_detalle_movimiento(id_movimiento: int):
 
 
 # -----------------------------------------------------------------------------
-# Ventas - CU 11
+# Ventas - CU 11 - 13
 # -----------------------------------------------------------------------------
 
 @app.post("/ventas/", tags=["Ventas"])
@@ -896,3 +896,515 @@ def registrar_venta(venta: VentaNueva):
         raise HTTPException(status_code=500, detail=f"No se pudo registrar la venta: {exc}")
     finally:
         cerrar_recursos(conn, cursor)
+@app.get("/ventas/", tags=["Ventas"])
+def consultar_ventas(
+    id_usuario: Optional[int] = None,
+    fecha_desde: Optional[date] = None,
+    fecha_hasta: Optional[date] = None
+):
+    conn = None
+    cursor = None
+
+    try:
+        conn = obtener_conexion()
+        cursor = conn.cursor()
+
+        consulta = """
+            SELECT
+                v."idVenta",
+                v.fecha,
+                v.total,
+                u."idUsuario",
+                u.nombre
+            FROM "VENTA" v
+            INNER JOIN "USUARIO" u
+                ON u."idUsuario" = v."idUsuario"
+            WHERE 1 = 1
+        """
+
+        parametros = []
+
+        if id_usuario is not None:
+            consulta += ' AND v."idUsuario" = %s'
+            parametros.append(id_usuario)
+
+        if fecha_desde:
+            consulta += " AND v.fecha >= %s"
+            parametros.append(fecha_desde)
+
+        if fecha_hasta:
+            consulta += " AND v.fecha <= %s"
+            parametros.append(fecha_hasta)
+
+        consulta += ' ORDER BY v.fecha DESC, v."idVenta" DESC;'
+
+        cursor.execute(consulta, parametros)
+        filas = cursor.fetchall()
+
+        ventas = [
+            {
+                "idVenta": fila[0],
+                "fecha": fila[1],
+                "total": float(fila[2]),
+                "idUsuario": fila[3],
+                "vendedor": fila[4]
+            }
+            for fila in filas
+        ]
+
+        return {
+            "ventas": ventas,
+            "cantidad": len(ventas)
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudieron consultar las ventas: {str(e)}"
+        )
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+@app.get("/ventas/{id_venta}", tags=["Ventas"])
+def consultar_detalle_venta(id_venta: int):
+    conn = None
+    cursor = None
+
+    try:
+        conn = obtener_conexion()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                v."idVenta",
+                v.fecha,
+                v.total,
+                u."idUsuario",
+                u.nombre
+            FROM "VENTA" v
+            INNER JOIN "USUARIO" u
+                ON u."idUsuario" = v."idUsuario"
+            WHERE v."idVenta" = %s;
+        """, (id_venta,))
+
+        venta = cursor.fetchone()
+
+        if venta is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No se encontró la venta solicitada."
+            )
+
+        cursor.execute("""
+            SELECT
+                dv."idDetalle",
+                p."idProducto",
+                p.nombre,
+                dv.cantidad,
+                dv."precioUnitario",
+                dv.subtotal
+            FROM "DETALLE_VENTA" dv
+            INNER JOIN PRODUCTO p
+                ON p."idProducto" = dv."idProducto"
+            WHERE dv."idVenta" = %s
+            ORDER BY dv."idDetalle";
+        """, (id_venta,))
+
+        detalles = [
+            {
+                "idDetalle": fila[0],
+                "idProducto": fila[1],
+                "nombreProducto": fila[2],
+                "cantidad": fila[3],
+                "precioUnitario": float(fila[4]),
+                "subtotal": float(fila[5])
+            }
+            for fila in cursor.fetchall()
+        ]
+
+        return {
+            "idVenta": venta[0],
+            "fecha": venta[1],
+            "total": float(venta[2]),
+            "vendedor": {
+                "idUsuario": venta[3],
+                "nombre": venta[4]
+            },
+            "detalles": detalles
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudo consultar el detalle de la venta: {str(e)}"
+        )
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+# -----------------------------------------------------------------------------
+# Alertas CU 15
+# -----------------------------------------------------------------------------
+
+
+@app.get("/alertas/", tags=["Alertas"])
+def consultar_alertas(criterio: Optional[str] = Query(default=None)):
+    conn = None
+    cursor = None
+
+    try:
+        conn = obtener_conexion()
+        cursor = conn.cursor()
+
+        consulta = """
+            WITH alertas_recientes AS (
+                SELECT DISTINCT ON ("idProducto")
+                    "idAlerta",
+                    "idProducto",
+                    "fechaCreacion",
+                    mensaje,
+                    "cantidadDetectada",
+                    "stockMinimoDetectado"
+                FROM ALERTA
+                ORDER BY
+                    "idProducto",
+                    "fechaCreacion" DESC,
+                    "idAlerta" DESC
+            )
+            SELECT
+                a."idAlerta",
+                a."fechaCreacion",
+                a.mensaje,
+                p."idProducto",
+                p.nombre,
+                p.categoria,
+                s."cantidadDisponible",
+                p."stockMinimo"
+            FROM PRODUCTO p
+            INNER JOIN "STOCK" s
+                ON s."idProducto" = p."idProducto"
+            LEFT JOIN alertas_recientes a
+                ON a."idProducto" = p."idProducto"
+            WHERE p.activo = TRUE
+              AND s."cantidadDisponible" <= p."stockMinimo"
+        """
+
+        parametros = []
+
+        if criterio and criterio.strip():
+            busqueda = f"%{criterio.strip()}%"
+            consulta += """
+                AND (
+                    p.nombre ILIKE %s
+                    OR p.categoria ILIKE %s
+                )
+            """
+            parametros = [busqueda, busqueda]
+
+        consulta += """
+            ORDER BY
+                (p."stockMinimo" - s."cantidadDisponible") DESC,
+                p.nombre;
+        """
+
+        cursor.execute(consulta, parametros)
+        filas = cursor.fetchall()
+
+        alertas = [
+            {
+                "idAlerta": fila[0],
+                "fechaCreacion": fila[1],
+                "mensaje": fila[2],
+                "idProducto": fila[3],
+                "nombreProducto": fila[4],
+                "categoria": fila[5],
+                "cantidadDisponible": fila[6],
+                "stockMinimo": fila[7],
+                "estadoStock": "BAJO"
+            }
+            for fila in filas
+        ]
+
+        return {
+            "alertas": alertas,
+            "cantidad": len(alertas)
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudieron consultar las alertas: {str(e)}"
+        )
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+@app.get("/alertas/{id_producto}" , tags=["Alertas"])
+def consultar_detalle_alerta(id_producto: int):
+    conn = None
+    cursor = None
+
+    try:
+        conn = obtener_conexion()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                p."idProducto",
+                p.nombre,
+                p.descripcion,
+                p.categoria,
+                p.precio,
+                p."stockMinimo",
+                p.activo,
+                s."cantidadDisponible",
+                s."fechaActualizacion"
+            FROM PRODUCTO p
+            INNER JOIN "STOCK" s
+                ON s."idProducto" = p."idProducto"
+            WHERE p."idProducto" = %s;
+        """, (id_producto,))
+
+        producto = cursor.fetchone()
+
+        if producto is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No se encontró el producto solicitado."
+            )
+
+        (
+            id_producto,
+            nombre,
+            descripcion,
+            categoria,
+            precio,
+            stock_minimo,
+            activo,
+            cantidad_disponible,
+            fecha_actualizacion
+        ) = producto
+
+        if not activo or cantidad_disponible > stock_minimo:
+            raise HTTPException(
+                status_code=409,
+                detail="La alerta ya no está vigente para este producto."
+            )
+
+        cursor.execute("""
+            SELECT
+                "idAlerta",
+                "fechaCreacion",
+                mensaje,
+                "cantidadDetectada",
+                "stockMinimoDetectado"
+            FROM ALERTA
+            WHERE "idProducto" = %s
+            ORDER BY "fechaCreacion" DESC, "idAlerta" DESC
+            LIMIT 1;
+        """, (id_producto,))
+
+        alerta = cursor.fetchone()
+
+        return {
+            "producto": {
+                "idProducto": id_producto,
+                "nombre": nombre,
+                "descripcion": descripcion,
+                "categoria": categoria,
+                "precio": float(precio),
+                "cantidadDisponible": cantidad_disponible,
+                "stockMinimo": stock_minimo,
+                "fechaActualizacion": fecha_actualizacion,
+                "estadoStock": "BAJO"
+            },
+            "ultimaAlerta": (
+                {
+                    "idAlerta": alerta[0],
+                    "fechaCreacion": alerta[1],
+                    "mensaje": alerta[2],
+                    "cantidadDetectada": alerta[3],
+                    "stockMinimoDetectado": alerta[4]
+                }
+                if alerta else None
+            )
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudo consultar el detalle de la alerta: {str(e)}"
+        )
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+# -----------------------------------------------------------------------------
+# Dashboard
+# -----------------------------------------------------------------------------
+@app.get("/dashboard/", tags=["Dashboard"])
+def consultar_dashboard(
+    fecha_desde: Optional[date] = None,
+    fecha_hasta: Optional[date] = None
+):
+    conn = None
+    cursor = None
+
+    try:
+        conn = obtener_conexion()
+        cursor = conn.cursor()
+
+        filtro_ventas = "WHERE 1 = 1"
+        parametros = []
+
+        if fecha_desde:
+            filtro_ventas += " AND fecha >= %s"
+            parametros.append(fecha_desde)
+
+        if fecha_hasta:
+            filtro_ventas += " AND fecha <= %s"
+            parametros.append(fecha_hasta)
+
+        # Resumen general de ventas
+        cursor.execute(f"""
+            SELECT
+                COUNT(*) AS cantidad_ventas,
+                COALESCE(SUM(total), 0) AS total_facturado
+            FROM "VENTA"
+            {filtro_ventas};
+        """, parametros)
+
+        resumen_ventas = cursor.fetchone()
+
+        # Evolución de ventas por día
+        cursor.execute(f"""
+            SELECT
+                fecha,
+                COUNT(*) AS cantidad_ventas,
+                COALESCE(SUM(total), 0) AS total_facturado
+            FROM "VENTA"
+            {filtro_ventas}
+            GROUP BY fecha
+            ORDER BY fecha;
+        """, parametros)
+
+        evolucion_ventas = [
+            {
+                "fecha": fila[0],
+                "cantidadVentas": fila[1],
+                "totalFacturado": float(fila[2])
+            }
+            for fila in cursor.fetchall()
+        ]
+
+        # Ventas por producto durante el período elegido
+        cursor.execute(f"""
+            WITH ventas_periodo AS (
+                SELECT "idVenta"
+                FROM "VENTA"
+                {filtro_ventas}
+            )
+            SELECT
+                p."idProducto",
+                p.nombre,
+                COALESCE(SUM(dv.cantidad), 0) AS cantidad_vendida
+            FROM PRODUCTO p
+            LEFT JOIN "DETALLE_VENTA" dv
+                ON dv."idProducto" = p."idProducto"
+            LEFT JOIN ventas_periodo vp
+                ON vp."idVenta" = dv."idVenta"
+            WHERE p.activo = TRUE
+              AND (
+                  vp."idVenta" IS NOT NULL
+                  OR dv."idDetalle" IS NULL
+              )
+            GROUP BY p."idProducto", p.nombre;
+        """, parametros)
+
+        productos_vendidos = [
+            {
+                "idProducto": fila[0],
+                "nombre": fila[1],
+                "cantidadVendida": fila[2]
+            }
+            for fila in cursor.fetchall()
+        ]
+
+        productos_mas_vendidos = sorted(
+            productos_vendidos,
+            key=lambda producto: producto["cantidadVendida"],
+            reverse=True
+        )[:5]
+
+        productos_menos_vendidos = sorted(
+            productos_vendidos,
+            key=lambda producto: producto["cantidadVendida"]
+        )[:5]
+
+        # Estado actual del inventario
+        cursor.execute("""
+            SELECT
+                COUNT(*) AS productos_activos,
+                COALESCE(SUM(s."cantidadDisponible"), 0) AS unidades_disponibles,
+                COUNT(*) FILTER (
+                    WHERE s."cantidadDisponible" <= p."stockMinimo"
+                ) AS productos_stock_bajo,
+                COUNT(*) FILTER (
+                    WHERE s."cantidadDisponible" > p."stockMinimo"
+                ) AS productos_stock_normal
+            FROM PRODUCTO p
+            INNER JOIN "STOCK" s
+                ON s."idProducto" = p."idProducto"
+            WHERE p.activo = TRUE;
+        """)
+
+        inventario = cursor.fetchone()
+
+        return {
+            "periodo": {
+                "fechaDesde": fecha_desde,
+                "fechaHasta": fecha_hasta
+            },
+            "resumenVentas": {
+                "cantidadVentas": resumen_ventas[0],
+                "totalFacturado": float(resumen_ventas[1])
+            },
+            "productosMasVendidos": productos_mas_vendidos,
+            "productosMenosVendidos": productos_menos_vendidos,
+            "evolucionVentas": evolucion_ventas,
+            "inventario": {
+                "productosActivos": inventario[0],
+                "unidadesDisponibles": inventario[1],
+                "productosStockBajo": inventario[2],
+                "productosStockNormal": inventario[3]
+            },
+            "informacionInsuficiente": len(evolucion_ventas) == 0
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudo cargar el dashboard: {str(e)}"
+        )
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
