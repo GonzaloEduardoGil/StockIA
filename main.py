@@ -8,6 +8,7 @@ import os
 from datetime import date
 from decimal import Decimal
 from typing import List, Optional
+from math import ceil
 
 import psycopg2
 from fastapi import FastAPI, HTTPException, Query
@@ -88,6 +89,13 @@ class VentaNueva(BaseModel):
     productos: List[ProductoVendido]
 
 
+class SolicitudRecomendacion(BaseModel):
+    idUsuario: int
+
+
+class DecisionRecomendacion(BaseModel):
+    idUsuario: int
+    estado: str
 # -----------------------------------------------------------------------------
 # Funciones auxiliares
 # -----------------------------------------------------------------------------
@@ -1401,6 +1409,476 @@ def consultar_dashboard(
         raise HTTPException(
             status_code=500,
             detail=f"No se pudo cargar el dashboard: {str(e)}"
+        )
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+@app.get("/productos/{id_producto}/analisis", tags=["Dashboard"])
+def consultar_analisis_producto(id_producto: int):
+    conn = None
+    cursor = None
+
+    try:
+        conn = obtener_conexion()
+        cursor = conn.cursor()
+
+        # Datos generales del producto
+        cursor.execute("""
+            SELECT
+                p."idProducto",
+                p.nombre,
+                p.descripcion,
+                p.categoria,
+                p.precio,
+                p."stockMinimo",
+                p.activo,
+                s."cantidadDisponible",
+                s."fechaActualizacion"
+            FROM PRODUCTO p
+            LEFT JOIN "STOCK" s
+                ON s."idProducto" = p."idProducto"
+            WHERE p."idProducto" = %s;
+        """, (id_producto,))
+
+        producto = cursor.fetchone()
+
+        if producto is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No se encontró el producto solicitado."
+            )
+
+        # Resumen de ventas del producto
+        cursor.execute("""
+            SELECT
+                COUNT(DISTINCT v."idVenta") AS cantidad_ventas,
+                COALESCE(SUM(dv.cantidad), 0) AS unidades_vendidas,
+                COALESCE(SUM(dv.subtotal), 0) AS total_facturado
+            FROM "DETALLE_VENTA" dv
+            INNER JOIN "VENTA" v
+                ON v."idVenta" = dv."idVenta"
+            WHERE dv."idProducto" = %s;
+        """, (id_producto,))
+
+        resumen_ventas = cursor.fetchone()
+
+        # Evolución de ventas por fecha
+        cursor.execute("""
+            SELECT
+                v.fecha,
+                SUM(dv.cantidad) AS unidades_vendidas,
+                SUM(dv.subtotal) AS total_facturado
+            FROM "DETALLE_VENTA" dv
+            INNER JOIN "VENTA" v
+                ON v."idVenta" = dv."idVenta"
+            WHERE dv."idProducto" = %s
+            GROUP BY v.fecha
+            ORDER BY v.fecha;
+        """, (id_producto,))
+
+        evolucion_ventas = [
+            {
+                "fecha": fila[0],
+                "unidadesVendidas": fila[1],
+                "totalFacturado": float(fila[2])
+            }
+            for fila in cursor.fetchall()
+        ]
+
+        # Predicciones, incluidas las históricas
+        cursor.execute("""
+            SELECT
+                "idPrediccion",
+                "fechaPrediccion",
+                "periodoPrediccion",
+                "cantidadEstimada"
+            FROM "PREDICCION_DEMANDA"
+            WHERE "idProducto" = %s
+            ORDER BY "fechaPrediccion" DESC, "idPrediccion" DESC;
+        """, (id_producto,))
+
+        predicciones = [
+            {
+                "idPrediccion": fila[0],
+                "fechaPrediccion": fila[1],
+                "periodoPrediccion": fila[2],
+                "cantidadEstimada": float(fila[3])
+            }
+            for fila in cursor.fetchall()
+        ]
+
+        # Recomendaciones, incluidas aceptadas o rechazadas
+        cursor.execute("""
+            SELECT
+                r."idRecomendacion",
+                r.fecha,
+                r.tipo,
+                r."cantidadSugerida",
+                r.motivo,
+                r.estado,
+                u."idUsuario",
+                u.nombre
+            FROM "RECOMENDACION" r
+            INNER JOIN "USUARIO" u
+                ON u."idUsuario" = r."idUsuario"
+            WHERE r."idProducto" = %s
+            ORDER BY r.fecha DESC, r."idRecomendacion" DESC;
+        """, (id_producto,))
+
+        recomendaciones = [
+            {
+                "idRecomendacion": fila[0],
+                "fecha": fila[1],
+                "tipo": fila[2],
+                "cantidadSugerida": fila[3],
+                "motivo": fila[4],
+                "estado": fila[5],
+                "usuario": {
+                    "idUsuario": fila[6],
+                    "nombre": fila[7]
+                }
+            }
+            for fila in cursor.fetchall()
+        ]
+
+        return {
+            "producto": {
+                "idProducto": producto[0],
+                "nombre": producto[1],
+                "descripcion": producto[2],
+                "categoria": producto[3],
+                "precio": float(producto[4]),
+                "stockMinimo": producto[5],
+                "activo": producto[6],
+                "cantidadDisponible": producto[7],
+                "fechaActualizacionStock": producto[8]
+            },
+            "resumenVentas": {
+                "cantidadVentas": resumen_ventas[0],
+                "unidadesVendidas": resumen_ventas[1],
+                "totalFacturado": float(resumen_ventas[2])
+            },
+            "evolucionVentas": evolucion_ventas,
+            "predicciones": predicciones,
+            "recomendaciones": recomendaciones,
+            "sinPredicciones": len(predicciones) == 0,
+            "sinRecomendaciones": len(recomendaciones) == 0
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudo consultar el análisis del producto: {str(e)}"
+        )
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+# -----------------------------------------------------------------------------
+# Recomendaciones
+# -----------------------------------------------------------------------------
+@app.post("/recomendaciones/generar", tags=["Recomendaciones"])
+def generar_recomendaciones(datos: SolicitudRecomendacion):
+    conn = None
+    cursor = None
+
+    try:
+        conn = obtener_conexion()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT rol
+            FROM "USUARIO"
+            WHERE "idUsuario" = %s;
+        """, (datos.idUsuario,))
+
+        usuario = cursor.fetchone()
+
+        if usuario is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No se encontró el usuario."
+            )
+
+        if usuario[0] not in ["Encargado de stock", "Administrador"]:
+            raise HTTPException(
+                status_code=403,
+                detail="El usuario no tiene permisos para generar recomendaciones."
+            )
+
+        cursor.execute("""
+            WITH ventas_30_dias AS (
+                SELECT
+                    dv."idProducto",
+                    SUM(dv.cantidad) AS cantidad_vendida
+                FROM "DETALLE_VENTA" dv
+                INNER JOIN "VENTA" v
+                    ON v."idVenta" = dv."idVenta"
+                WHERE v.fecha >= CURRENT_DATE - INTERVAL '30 days'
+                GROUP BY dv."idProducto"
+            )
+            SELECT
+                p."idProducto",
+                p.nombre,
+                p."stockMinimo",
+                s."cantidadDisponible",
+                pred."cantidadEstimada",
+                pred."periodoPrediccion",
+                COALESCE(v30.cantidad_vendida, 0) AS ventas_30_dias
+            FROM PRODUCTO p
+            INNER JOIN "STOCK" s
+                ON s."idProducto" = p."idProducto"
+            LEFT JOIN LATERAL (
+                SELECT
+                    "cantidadEstimada",
+                    "periodoPrediccion"
+                FROM "PREDICCION_DEMANDA"
+                WHERE "idProducto" = p."idProducto"
+                ORDER BY "fechaPrediccion" DESC, "idPrediccion" DESC
+                LIMIT 1
+            ) pred ON TRUE
+            LEFT JOIN ventas_30_dias v30
+                ON v30."idProducto" = p."idProducto"
+            WHERE p.activo = TRUE;
+        """)
+
+        productos = cursor.fetchall()
+        recomendaciones_generadas = []
+
+        for producto in productos:
+            (
+                id_producto,
+                nombre,
+                stock_minimo,
+                cantidad_disponible,
+                cantidad_estimada,
+                periodo_prediccion,
+                ventas_30_dias
+            ) = producto
+
+            # Si existe una predicción, tiene prioridad.
+            # Si no existe, se usa el historial de los últimos 30 días.
+            if cantidad_estimada is not None:
+                demanda_estimada = ceil(float(cantidad_estimada))
+                fuente_demanda = f"predicción para {periodo_prediccion}"
+            else:
+                demanda_estimada = int(ventas_30_dias)
+                fuente_demanda = "ventas de los últimos 30 días"
+
+            hay_riesgo = (
+                cantidad_disponible <= stock_minimo
+                or cantidad_disponible < demanda_estimada
+            )
+
+            if not hay_riesgo:
+                continue
+
+            # El objetivo es dejar al menos el doble del mínimo
+            # o cubrir la demanda estimada, según cuál sea mayor.
+            stock_objetivo = max(stock_minimo * 2, demanda_estimada)
+            cantidad_sugerida = max(0, stock_objetivo - cantidad_disponible)
+
+            if cantidad_sugerida == 0:
+                continue
+
+            # Evita repetir una recomendación pendiente para el mismo producto.
+            cursor.execute("""
+                SELECT 1
+                FROM "RECOMENDACION"
+                WHERE "idProducto" = %s
+                  AND estado = 'Pendiente'
+                LIMIT 1;
+            """, (id_producto,))
+
+            if cursor.fetchone():
+                continue
+
+            motivo = (
+                f"Stock actual: {cantidad_disponible}. "
+                f"Stock mínimo: {stock_minimo}. "
+                f"Demanda estimada según {fuente_demanda}: {demanda_estimada}."
+            )
+
+            cursor.execute("""
+                INSERT INTO "RECOMENDACION" (
+                    "idUsuario",
+                    "idProducto",
+                    fecha,
+                    tipo,
+                    "cantidadSugerida",
+                    motivo,
+                    estado
+                )
+                VALUES (%s, %s, CURRENT_DATE, %s, %s, %s, %s)
+                RETURNING "idRecomendacion";
+            """, (
+                datos.idUsuario,
+                id_producto,
+                "Reposición",
+                cantidad_sugerida,
+                motivo,
+                "Pendiente"
+            ))
+
+            id_recomendacion = cursor.fetchone()[0]
+
+            recomendaciones_generadas.append({
+                "idRecomendacion": id_recomendacion,
+                "idProducto": id_producto,
+                "nombreProducto": nombre,
+                "cantidadSugerida": cantidad_sugerida,
+                "motivo": motivo,
+                "estado": "Pendiente"
+            })
+
+        conn.commit()
+
+        return {
+            "mensaje": "Proceso de recomendaciones finalizado.",
+            "recomendaciones": recomendaciones_generadas,
+            "cantidad": len(recomendaciones_generadas)
+        }
+
+    except HTTPException:
+        if conn:
+            conn.rollback()
+        raise
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudieron generar las recomendaciones: {str(e)}"
+        )
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+@app.patch("/recomendaciones/{id_recomendacion}/decision", tags=["Recomendaciones"])
+def registrar_decision_recomendacion(
+    id_recomendacion: int,
+    datos: DecisionRecomendacion
+):
+    conn = None
+    cursor = None
+
+    try:
+        estado = datos.estado.strip().capitalize()
+
+        if estado not in ["Aceptada", "Rechazada"]:
+            raise HTTPException(
+                status_code=422,
+                detail="El estado debe ser 'Aceptada' o 'Rechazada'."
+            )
+
+        conn = obtener_conexion()
+        cursor = conn.cursor()
+
+        # Verifica permisos del usuario que toma la decisión
+        cursor.execute("""
+            SELECT rol
+            FROM "USUARIO"
+            WHERE "idUsuario" = %s;
+        """, (datos.idUsuario,))
+
+        usuario = cursor.fetchone()
+
+        if usuario is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No se encontró el usuario."
+            )
+
+        if usuario[0] not in ["Encargado de stock", "Administrador"]:
+            raise HTTPException(
+                status_code=403,
+                detail="El usuario no tiene permisos para decidir sobre recomendaciones."
+            )
+
+        # Obtiene la recomendación pendiente
+        cursor.execute("""
+            SELECT
+                "idUsuario",
+                "idProducto",
+                "cantidadSugerida",
+                estado
+            FROM "RECOMENDACION"
+            WHERE "idRecomendacion" = %s;
+        """, (id_recomendacion,))
+
+        recomendacion = cursor.fetchone()
+
+        if recomendacion is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No se encontró la recomendación solicitada."
+            )
+
+        id_usuario_creador, id_producto, cantidad_sugerida, estado_actual = recomendacion
+
+        if estado_actual != "Pendiente":
+            raise HTTPException(
+                status_code=409,
+                detail="La recomendación ya fue decidida previamente."
+            )
+
+        # Un administrador puede decidir cualquier recomendación.
+        # El encargado solo puede decidir las que generó.
+        if (
+            usuario[0] != "Administrador"
+            and id_usuario_creador != datos.idUsuario
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Solo podés decidir recomendaciones generadas por tu usuario."
+            )
+
+        cursor.execute("""
+            UPDATE "RECOMENDACION"
+            SET estado = %s
+            WHERE "idRecomendacion" = %s
+            RETURNING fecha, tipo, motivo;
+        """, (estado, id_recomendacion))
+
+        fecha, tipo, motivo = cursor.fetchone()
+        conn.commit()
+
+        return {
+            "mensaje": f"Recomendación {estado.lower()} con éxito.",
+            "recomendacion": {
+                "idRecomendacion": id_recomendacion,
+                "idProducto": id_producto,
+                "cantidadSugerida": cantidad_sugerida,
+                "fecha": fecha,
+                "tipo": tipo,
+                "motivo": motivo,
+                "estado": estado
+            },
+            "stockModificado": False
+        }
+
+    except HTTPException:
+        if conn:
+            conn.rollback()
+        raise
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudo registrar la decisión: {str(e)}"
         )
 
     finally:
