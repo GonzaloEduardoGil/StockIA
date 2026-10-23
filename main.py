@@ -14,6 +14,8 @@ import psycopg2
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
+import pandas as pd
+from xgboost import XGBRegressor
 
 # -----------------------------------------------------------------------------
 # Configuración
@@ -96,6 +98,9 @@ class SolicitudRecomendacion(BaseModel):
 class DecisionRecomendacion(BaseModel):
     idUsuario: int
     estado: str
+
+class SolicitudPrediccion(BaseModel):
+    diasPrediccion: int = Field(ge=1, le=30)
 # -----------------------------------------------------------------------------
 # Funciones auxiliares
 # -----------------------------------------------------------------------------
@@ -1264,7 +1269,7 @@ def consultar_detalle_alerta(id_producto: int):
         if conn:
             conn.close()
 # -----------------------------------------------------------------------------
-# Dashboard
+# Dashboard CU 16 - 17
 # -----------------------------------------------------------------------------
 @app.get("/dashboard/", tags=["Dashboard"])
 def consultar_dashboard(
@@ -1583,7 +1588,7 @@ def consultar_analisis_producto(id_producto: int):
         if conn:
             conn.close()
 # -----------------------------------------------------------------------------
-# Recomendaciones
+# Recomendaciones CU 18
 # -----------------------------------------------------------------------------
 @app.post("/recomendaciones/generar", tags=["Recomendaciones"])
 def generar_recomendaciones(datos: SolicitudRecomendacion):
@@ -1879,6 +1884,211 @@ def registrar_decision_recomendacion(
         raise HTTPException(
             status_code=500,
             detail=f"No se pudo registrar la decisión: {str(e)}"
+        )
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+# -----------------------------------------------------------------------------
+# Predicciones
+# -----------------------------------------------------------------------------
+
+@app.post("/predicciones/{id_producto}/generar", tags=["Predicciones"])
+def generar_prediccion(
+    id_producto: int,
+    datos: SolicitudPrediccion
+):
+    conn = None
+    cursor = None
+
+    try:
+        conn = obtener_conexion()
+        cursor = conn.cursor()
+
+        # Verifica el producto
+        cursor.execute("""
+            SELECT nombre, activo
+            FROM PRODUCTO
+            WHERE "idProducto" = %s;
+        """, (id_producto,))
+
+        producto = cursor.fetchone()
+
+        if producto is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No se encontró el producto solicitado."
+            )
+
+        nombre_producto, activo = producto
+
+        if not activo:
+            raise HTTPException(
+                status_code=409,
+                detail="No se pueden generar predicciones para un producto inactivo."
+            )
+
+        # Obtiene ventas agrupadas por día
+        cursor.execute("""
+            SELECT
+                v.fecha,
+                SUM(dv.cantidad) AS cantidad_vendida
+            FROM "DETALLE_VENTA" dv
+            INNER JOIN "VENTA" v
+                ON v."idVenta" = dv."idVenta"
+            WHERE dv."idProducto" = %s
+            GROUP BY v.fecha
+            ORDER BY v.fecha;
+        """, (id_producto,))
+
+        filas = cursor.fetchall()
+
+        if len(filas) < 14:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "No hay suficiente historial para entrenar el modelo. "
+                    "Se requieren al menos 14 días de ventas."
+                )
+            )
+
+        ventas = pd.DataFrame(
+            filas,
+            columns=["fecha", "cantidadVendida"]
+        )
+
+        ventas["fecha"] = pd.to_datetime(ventas["fecha"])
+
+        # Completa con cero los días en que no hubo ventas
+        rango_fechas = pd.date_range(
+            start=ventas["fecha"].min(),
+            end=pd.Timestamp(date.today()),
+            freq="D"
+        )
+
+        serie_ventas = (
+            ventas
+            .set_index("fecha")["cantidadVendida"]
+            .reindex(rango_fechas, fill_value=0)
+            .astype(float)
+        )
+
+        # Crea variables para el modelo
+        entrenamiento = pd.DataFrame({
+            "cantidad": serie_ventas
+        })
+
+        entrenamiento["venta_dia_anterior"] = (
+            entrenamiento["cantidad"].shift(1)
+        )
+
+        entrenamiento["venta_hace_7_dias"] = (
+            entrenamiento["cantidad"].shift(7)
+        )
+
+        entrenamiento["promedio_ultimos_7_dias"] = (
+            entrenamiento["cantidad"]
+            .shift(1)
+            .rolling(window=7)
+            .mean()
+        )
+
+        entrenamiento = entrenamiento.dropna()
+
+        if len(entrenamiento) < 7:
+            raise HTTPException(
+                status_code=422,
+                detail="No hay suficientes datos para entrenar XGBoost."
+            )
+
+        columnas = [
+            "venta_dia_anterior",
+            "venta_hace_7_dias",
+            "promedio_ultimos_7_dias"
+        ]
+
+        X = entrenamiento[columnas]
+        y = entrenamiento["cantidad"]
+
+        modelo = XGBRegressor(
+            objective="reg:squarederror",
+            n_estimators=150,
+            max_depth=3,
+            learning_rate=0.05,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            random_state=42,
+            n_jobs=1
+        )
+
+        modelo.fit(X, y)
+
+        # Predice día por día para el período solicitado
+        historial = list(serie_ventas.values)
+        predicciones_diarias = []
+
+        for _ in range(datos.diasPrediccion):
+            datos_entrada = pd.DataFrame([{
+                "venta_dia_anterior": historial[-1],
+                "venta_hace_7_dias": historial[-7],
+                "promedio_ultimos_7_dias": sum(historial[-7:]) / 7
+            }])
+
+            prediccion = float(modelo.predict(datos_entrada)[0])
+            prediccion = max(0, prediccion)
+
+            historial.append(prediccion)
+            predicciones_diarias.append(prediccion)
+
+        cantidad_estimada = ceil(sum(predicciones_diarias))
+        periodo = f"Próximos {datos.diasPrediccion} días"
+
+        # Guarda el resultado para consultas y recomendaciones posteriores
+        cursor.execute("""
+            INSERT INTO "PREDICCION_DEMANDA" (
+                "idProducto",
+                "fechaPrediccion",
+                "periodoPrediccion",
+                "cantidadEstimada"
+            )
+            VALUES (%s, CURRENT_DATE, %s, %s)
+            RETURNING "idPrediccion";
+        """, (
+            id_producto,
+            periodo,
+            cantidad_estimada
+        ))
+
+        id_prediccion = cursor.fetchone()[0]
+        conn.commit()
+
+        return {
+            "mensaje": "Predicción generada con éxito.",
+            "idPrediccion": id_prediccion,
+            "idProducto": id_producto,
+            "nombreProducto": nombre_producto,
+            "periodoPrediccion": periodo,
+            "cantidadEstimada": cantidad_estimada,
+            "prediccionesDiarias": [
+                round(prediccion, 2)
+                for prediccion in predicciones_diarias
+            ]
+        }
+
+    except HTTPException:
+        if conn:
+            conn.rollback()
+        raise
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudo generar la predicción: {str(e)}"
         )
 
     finally:
