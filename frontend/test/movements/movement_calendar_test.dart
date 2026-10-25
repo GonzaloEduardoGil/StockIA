@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:stockia/widgets/compact_calendar.dart';
 
 import 'movements_test.dart' as data;
-import 'tap_visible.dart';
+import '../helpers/tap_visible.dart';
 
 Future<void> chooseDate(WidgetTester tester, String date) async {
   expect(find.byType(CompactCalendar), findsOneWidget);

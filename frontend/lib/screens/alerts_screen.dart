@@ -39,14 +39,31 @@ class _AlertsScreenState extends State<AlertsScreen> {
   @override
   void initState() {
     super.initState();
+    widget.api.alerts.addListener(_changed);
     _load();
     if (widget.initialProductId != null) _open(widget.initialProductId!);
   }
 
   @override
   void dispose() {
+    widget.api.alerts.removeListener(_changed);
     _search.dispose();
     super.dispose();
+  }
+
+  void _changed() {
+    final alerts = widget.api.alerts.value;
+    if (!mounted || alerts == null) return;
+    setState(() {
+      _alerts = alerts;
+      _loading = false;
+      _error = null;
+      if (_category != null && !alerts.any((a) => a.category == _category)) {
+        _category = null;
+      }
+    });
+    // Conserva la selección y los filtros al actualizar desde otra sesión.
+    if (_selectedId != null && !_detailLoading) _open(_selectedId!);
   }
 
   Future<void> _load() async {
@@ -243,9 +260,11 @@ class _AlertsScreenState extends State<AlertsScreen> {
                 ],
               ),
               const SizedBox(height: 20),
-              if (_loading)
+              if (_error != null && _alerts.isNotEmpty)
+                _message(_error!, retry: _load),
+              if (_loading && _alerts.isEmpty)
                 const Center(child: CircularProgressIndicator())
-              else if (_error != null)
+              else if (_error != null && _alerts.isEmpty)
                 _message(_error!, retry: _load)
               else if (_alerts.isEmpty)
                 _message('No hay productos con stock bajo.')

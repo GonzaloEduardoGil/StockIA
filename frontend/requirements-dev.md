@@ -103,6 +103,10 @@ flutter analyze
 flutter test
 ```
 
+Las pruebas están en `test/`, agrupadas por módulo. Las utilidades compartidas
+están en `test/helpers/`. `flutter test` ejecuta todos los grupos; para uno solo,
+por ejemplo, usar `flutter test test/alerts/`.
+
 `flutter pub get` instala `http`, las herramientas de pruebas y las demás
 dependencias declaradas. No hace falta un `requirements.txt` de Python dentro
 del frontend. Al descargar el proyecto por primera vez se necesita conexión para

@@ -32,7 +32,7 @@ class _StockiaAppState extends State<StockiaApp> {
   @override
   void initState() {
     super.initState();
-    _api = widget.api ?? InventoryApi();
+    _api = widget.api ?? InventoryApi(enableAlertEvents: true);
   }
 
   @override

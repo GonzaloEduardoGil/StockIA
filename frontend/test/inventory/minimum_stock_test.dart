@@ -1,4 +1,4 @@
-import 'tap_visible.dart';
+import '../helpers/tap_visible.dart';
 
 import 'dart:async';
 import 'dart:convert';

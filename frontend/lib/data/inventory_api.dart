@@ -15,6 +15,7 @@ import '../models/product_analysis.dart';
 import '../models/recommendation.dart';
 import '../models/auth_session.dart';
 import 'session_client.dart';
+import 'alert_updates.dart';
 
 class ApiFailure implements Exception {
   const ApiFailure(
@@ -28,9 +29,25 @@ class ApiFailure implements Exception {
 }
 
 class InventoryApi {
-  InventoryApi({http.Client? client, String? baseUrl})
-    : _transport = client ?? http.Client(),
-      baseUrl = (baseUrl ?? configuredUrl).replaceAll(RegExp(r'/+$'), '');
+  InventoryApi({
+    http.Client? client,
+    String? baseUrl,
+    bool enableAlertEvents = false,
+    http.Client Function()? eventClientFactory,
+  }) : _transport = client ?? http.Client(),
+       baseUrl = (baseUrl ?? configuredUrl).replaceAll(RegExp(r'/+$'), '') {
+    if (enableAlertEvents) {
+      _alertUpdates = AlertUpdates(
+        baseUrl: this.baseUrl,
+        clientFactory: eventClientFactory,
+        onUpdate: invalidateAlerts,
+        onSessionExpired: (token) {
+          if (!_closed && session.value?.token == token) session.value = null;
+        },
+      );
+    }
+    session.addListener(_sessionChanged);
+  }
   static String get configuredUrl {
     const configured = String.fromEnvironment('API_BASE_URL');
     if (configured.isNotEmpty) return configured;
@@ -44,6 +61,29 @@ class InventoryApi {
   final session = ValueNotifier<AuthSession?>(null);
   late final http.Client _client = SessionClient(_transport, session);
   final String baseUrl;
+  final alerts = ValueNotifier<List<StockAlert>?>(null);
+  AlertUpdates? _alertUpdates;
+  Future<List<StockAlert>>? _alertsRequest;
+  bool _alertsDirty = false;
+  int _alertsEpoch = 0;
+
+  void _sessionChanged() {
+    ++_alertsEpoch;
+    _alertsRequest = null;
+    _alertsDirty = false;
+    alerts.value = null;
+    _alertUpdates?.stop();
+    final user = session.value;
+    if (user != null && user.stockRole) _alertUpdates?.start(user.token);
+  }
+
+  /// Una señal durante una consulta exige una lectura posterior: la primera
+  /// puede haber tomado su snapshot antes del commit que originó el aviso.
+  void invalidateAlerts() {
+    if (_closed) return;
+    _alertsDirty = true;
+    unawaited(loadAlerts().then<void>((_) {}, onError: (Object _) {}));
+  }
 
   Future<Map<String, dynamic>> _get(String path) async {
     try {
@@ -536,7 +576,33 @@ class InventoryApi {
     }
   }
 
-  Future<List<StockAlert>> loadAlerts() async {
+  Future<List<StockAlert>> loadAlerts() {
+    if (_alertsRequest != null) return _alertsRequest!;
+    final epoch = _alertsEpoch;
+    final completer = Completer<List<StockAlert>>();
+    _alertsRequest = completer.future;
+    Future<void> refresh() async {
+      try {
+        List<StockAlert> result;
+        do {
+          _alertsDirty = false;
+          result = await _fetchAlerts();
+        } while (!_closed && epoch == _alertsEpoch && _alertsDirty);
+        if (!_closed && epoch == _alertsEpoch) alerts.value = result;
+        completer.complete(result);
+      } catch (error, stack) {
+        // La última lista válida se conserva si falla una actualización.
+        completer.completeError(error, stack);
+      } finally {
+        if (identical(_alertsRequest, completer.future)) _alertsRequest = null;
+      }
+    }
+
+    unawaited(refresh());
+    return completer.future;
+  }
+
+  Future<List<StockAlert>> _fetchAlerts() async {
     final data = await _get('/alertas/');
     try {
       final alerts = (data['alertas'] as List<dynamic>)
@@ -861,6 +927,9 @@ class InventoryApi {
   void close() {
     if (_closed) return;
     _closed = true;
+    _alertUpdates?.stop();
+    session.removeListener(_sessionChanged);
+    alerts.dispose();
     _client.close();
     session.dispose();
   }

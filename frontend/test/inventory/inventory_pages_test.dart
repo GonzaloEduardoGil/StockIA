@@ -8,7 +8,7 @@ import 'package:stockia/screens/inventory_operation_page.dart';
 import 'package:stockia/widgets/product_details.dart';
 
 import 'stock_adjustment_test.dart' as data;
-import 'tap_visible.dart';
+import '../helpers/tap_visible.dart';
 
 Future<void> navigate(
   WidgetTester tester,

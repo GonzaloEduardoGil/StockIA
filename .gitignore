@@ -1,0 +1,20 @@
+# Python y entornos locales
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Dependencias y artefactos generados
+node_modules/
+build/
+coverage/
+*.log
+*.apk
+
+# Configuración y accesos locales
+.env
+.env.*
+!.env.example
+accesos-*.local.md

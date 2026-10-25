@@ -30,7 +30,7 @@ def initialize_auth_schema():
     connection = main.obtener_conexion()
     try:
         with connection.cursor() as cursor:
-            cursor.execute(Path(__file__).with_name('auth_schema.sql').read_text(encoding='utf-8'))
+            cursor.execute((Path(__file__).parent / 'sql' / 'auth_schema.sql').read_text(encoding='utf-8'))
         connection.commit()
     except Exception:
         connection.rollback()
@@ -178,6 +178,8 @@ def allowed_roles(method, path):
     if path in ('/auth/me', '/auth/logout'):
         return ROLES
     if method == 'GET':
+        if path == '/eventos/alertas':
+            return STOCK_ROLES
         if re.fullmatch(r'/(stock|productos|ventas)/?', path) or re.fullmatch(r'/(productos|ventas)/\d+', path):
             return ROLES
         if re.fullmatch(r'/(movimientos|alertas)(/\d+)?/?', path) or re.fullmatch(r'/(dashboard|predicciones|recomendaciones)/?', path) or re.fullmatch(r'/productos/\d+/analisis', path):

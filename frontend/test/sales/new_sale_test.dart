@@ -11,7 +11,7 @@ import 'package:stockia/models/product.dart';
 import 'package:stockia/models/sale.dart';
 import 'package:stockia/screens/new_sale_screen.dart';
 
-import 'tap_visible.dart';
+import '../helpers/tap_visible.dart';
 
 class SaleFixture {
   int writes = 0;

@@ -122,6 +122,10 @@ def detectar_stock_bajo(cursor, id_producto: int):
         return None
 
     nombre, activo, stock_minimo, cantidad_disponible = producto
+    # Invalida también avisos que dejaron de estar vigentes por una reposición.
+    # La señal se entrega solo si la operación termina con COMMIT.
+    from alert_events import publish_alert_change
+    publish_alert_change(cursor)
     if not activo or cantidad_disponible > stock_minimo:
         return None
 
@@ -370,6 +374,8 @@ def dar_baja_producto(id_producto: int):
             (id_producto,),
         )
         producto = cursor.fetchone()
+        from alert_events import publish_alert_change
+        publish_alert_change(cursor)
         conn.commit()
 
         return {

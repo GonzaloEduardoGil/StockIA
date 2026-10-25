@@ -6,13 +6,15 @@ del proyecto y no es el punto de arranque de la aplicación web autenticada.
 
 Preparación del entorno del backend:
 
+Ejecutar estos comandos desde `backend/`.
+
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe init_auth_db.py
 .\.venv\Scripts\python.exe -m uvicorn server:app --host 127.0.0.1 --port 8000
 ```
 
-`init_auth_db.py` crea la tabla de sesiones y su índice si no existen. Activa RLS
+`init_auth_db.py` aplica `sql/auth_schema.sql`: crea la tabla de sesiones y su índice si no existen. Activa RLS
 y revoca el acceso de los roles públicos de Supabase a usuarios y sesiones;
 el backend continúa usando su conexión de servicio original.
 No crea usuarios ni cambia cuentas, roles o contraseñas. El login usa el email y
@@ -34,5 +36,5 @@ Pruebas sin cuentas reales:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m unittest discover -s . -p "test_*.py"
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"
 ```

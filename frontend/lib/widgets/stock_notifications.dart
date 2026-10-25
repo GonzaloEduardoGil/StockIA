@@ -32,7 +32,34 @@ class _StockNotificationsState extends State<StockNotifications> {
   String? _error;
   int _request = 0;
   @override
+  void initState() {
+    super.initState();
+    widget.api.alerts.addListener(_changed);
+  }
+
+  @override
+  void didUpdateWidget(covariant StockNotifications oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.api != widget.api) {
+      oldWidget.api.alerts.removeListener(_changed);
+      widget.api.alerts.addListener(_changed);
+    }
+  }
+
+  void _changed() {
+    final alerts = widget.api.alerts.value;
+    if (!mounted || alerts == null) return;
+    setState(() {
+      _alerts = alerts;
+      _loading = false;
+      _error = null;
+    });
+    widget.onCountChanged?.call(alerts.length);
+  }
+
+  @override
   void dispose() {
+    widget.api.alerts.removeListener(_changed);
     _focus.dispose();
     super.dispose();
   }
@@ -42,7 +69,6 @@ class _StockNotificationsState extends State<StockNotifications> {
     setState(() {
       _loading = true;
       _error = null;
-      _alerts = [];
     });
     try {
       final alerts = await widget.api.loadAlerts();
@@ -148,7 +174,7 @@ class _StockNotificationsState extends State<StockNotifications> {
                 constraints: BoxConstraints(maxHeight: bodyHeight),
                 child: SingleChildScrollView(
                   primary: false,
-                  child: _loading
+                  child: _loading && _alerts.isEmpty
                       ? const Padding(
                           padding: EdgeInsets.all(24),
                           child: Center(
@@ -159,7 +185,7 @@ class _StockNotificationsState extends State<StockNotifications> {
                             ),
                           ),
                         )
-                      : _error != null
+                      : _error != null && _alerts.isEmpty
                       ? Padding(
                           padding: const EdgeInsets.all(18),
                           child: Column(
@@ -181,7 +207,19 @@ class _StockNotificationsState extends State<StockNotifications> {
                         )
                       : Column(
                           mainAxisSize: MainAxisSize.min,
-                          children: [for (final alert in _alerts) _row(alert)],
+                          children: [
+                            if (_error != null)
+                              ListTile(
+                                dense: true,
+                                title: Text(_error!),
+                                trailing: IconButton(
+                                  tooltip: 'Reintentar',
+                                  onPressed: _load,
+                                  icon: const Icon(Icons.refresh),
+                                ),
+                              ),
+                            for (final alert in _alerts) _row(alert),
+                          ],
                         ),
                 ),
               ),
