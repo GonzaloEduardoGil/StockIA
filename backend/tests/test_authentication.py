@@ -16,7 +16,7 @@ class AuthenticationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.source = SimpleNamespace(obtener_conexion=MagicMock())
-        spec = importlib.util.spec_from_file_location('authentication_under_test', Path(__file__).resolve().parents[1] / 'authentication.py')
+        spec = importlib.util.spec_from_file_location('authentication_under_test', Path(__file__).resolve().parents[1] / 'modules' / 'authentication.py')
         cls.auth = importlib.util.module_from_spec(spec)
         with patch.dict(sys.modules, {'main': cls.source}):
             spec.loader.exec_module(cls.auth)

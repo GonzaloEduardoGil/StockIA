@@ -2,15 +2,15 @@
 import os
 import psycopg2
 import main
-from alert_events import install_alert_events
+from modules.alert_events import install_alert_events
 from fastapi.middleware.cors import CORSMiddleware
 from main import app
-from authentication import router as authentication_router, AuthenticationMiddleware
+from modules.authentication import router as authentication_router, AuthenticationMiddleware
 
 app.include_router(authentication_router)
 app.add_middleware(AuthenticationMiddleware)
-from prediction_queries import router as prediction_router
-from recommendation_queries import router as recommendation_router
+from modules.prediction_queries import router as prediction_router
+from modules.recommendation_queries import router as recommendation_router
 
 app.include_router(prediction_router)
 app.include_router(recommendation_router)

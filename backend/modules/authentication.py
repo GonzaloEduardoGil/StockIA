@@ -30,7 +30,7 @@ def initialize_auth_schema():
     connection = main.obtener_conexion()
     try:
         with connection.cursor() as cursor:
-            cursor.execute((Path(__file__).parent / 'sql' / 'auth_schema.sql').read_text(encoding='utf-8'))
+            cursor.execute((Path(__file__).resolve().parents[1] / 'sql' / 'auth_schema.sql').read_text(encoding='utf-8'))
         connection.commit()
     except Exception:
         connection.rollback()

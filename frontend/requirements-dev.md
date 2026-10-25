@@ -114,6 +114,19 @@ obtener los paquetes y las herramientas de compilación.
 
 ## Ejecutar y conectar con el backend
 
+Para iniciar todo y abrir el navegador, desde la raíz del repositorio:
+
+```powershell
+.\iniciar-stockia.ps1
+```
+
+El comando espera a que la API y la web estén listas. Mantener la terminal
+abierta y usar Ctrl+C para detener los servicios que inició. Reutiliza los
+servicios del proyecto que ya estén ejecutándose. Los logs se guardan en
+`.stockia/logs/`. Con `-NoAbrirNavegador` no abre otra pestaña.
+
+También se pueden iniciar por separado:
+
 El backend se ejecuta por separado y tiene sus propias dependencias en
 `backend/requirements.txt`. Para consultar datos reales debe estar encendido.
 

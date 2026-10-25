@@ -18,3 +18,4 @@ coverage/
 .env.*
 !.env.example
 accesos-*.local.md
+.stockia/

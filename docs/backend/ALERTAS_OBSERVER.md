@@ -3,6 +3,10 @@
 El arranque sigue siendo `uvicorn server:app`. No hay dependencias nuevas ni
 migraciones de tablas. El aviso funciona mientras la aplicación está abierta.
 
+La implementación está en `backend/modules/alert_events.py`. El archivo
+`backend/alert_events.py` solo conserva el import de publicación que utiliza
+el backend original, de modo que `main.py` permanece intacto.
+
 ## Recorrido
 
 1. Una operación de stock llama a `detectar_stock_bajo`. Dentro de su misma

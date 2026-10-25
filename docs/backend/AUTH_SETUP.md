@@ -10,11 +10,11 @@ Ejecutar estos comandos desde `backend/`.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe init_auth_db.py
+.\.venv\Scripts\python.exe -m scripts.init_auth_db
 .\.venv\Scripts\python.exe -m uvicorn server:app --host 127.0.0.1 --port 8000
 ```
 
-`init_auth_db.py` aplica `sql/auth_schema.sql`: crea la tabla de sesiones y su índice si no existen. Activa RLS
+`scripts/init_auth_db.py` aplica `sql/auth_schema.sql`: crea la tabla de sesiones y su índice si no existen. Activa RLS
 y revoca el acceso de los roles públicos de Supabase a usuarios y sesiones;
 el backend continúa usando su conexión de servicio original.
 No crea usuarios ni cambia cuentas, roles o contraseñas. El login usa el email y

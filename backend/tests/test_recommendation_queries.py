@@ -11,7 +11,7 @@ class RecommendationQueriesTest(unittest.TestCase):
     def setUp(self):
         self.connection = MagicMock()
         self.cursor = self.connection.cursor.return_value.__enter__.return_value
-        spec = importlib.util.spec_from_file_location('recommendation_queries_under_test', Path(__file__).resolve().parents[1] / 'recommendation_queries.py')
+        spec = importlib.util.spec_from_file_location('recommendation_queries_under_test', Path(__file__).resolve().parents[1] / 'modules' / 'recommendation_queries.py')
         self.module = importlib.util.module_from_spec(spec)
         with patch.dict(sys.modules, {'main': SimpleNamespace(obtener_conexion=lambda: self.connection)}):
             spec.loader.exec_module(self.module)
