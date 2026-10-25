@@ -1,0 +1,2 @@
+# Dependencias Python desde la raíz; el backend conserva su instalación independiente.
+-r backend/requirements.txt

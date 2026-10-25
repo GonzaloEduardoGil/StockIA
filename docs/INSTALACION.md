@@ -42,17 +42,35 @@ Si el repositorio es privado, Git solicitará autenticarse con una cuenta que
 tenga acceso. Si ya se dispone de la carpeta, abrir PowerShell en esa carpeta
 y continuar sin volver a clonar.
 
-## 3. Instalar el backend
+## 3. Instalar todas las dependencias
 
 Desde la raíz `StockIA/`:
 
 ```powershell
-python -m venv backend\.venv
-.\backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+.\instalar.ps1
 ```
 
-Los comandos usan directamente el Python del entorno virtual; no es necesario
-activarlo en la terminal.
+El comando crea `backend/.venv` si hace falta, instala las dependencias Python
+desde el `requirements.txt` de la raíz y ejecuta `flutter pub get` en el front.
+Reutiliza el entorno existente y no necesita activarlo manualmente. Python y
+Flutter deben estar instalados previamente; no instala Android Studio ni prepara
+la base de datos.
+
+Para incluir también las dependencias de las pruebas del backend:
+
+```powershell
+.\instalar.ps1 -ConPruebas
+```
+
+Si solo se necesita instalar Python manualmente, desde la misma raíz:
+
+```powershell
+python -m venv backend\.venv
+.\backend\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+El archivo raíz referencia `backend/requirements.txt`, que se conserva para
+desplegar el backend por separado.
 
 ### Preparación de sesiones
 
@@ -76,7 +94,8 @@ Más detalles: [Autenticación](backend/AUTH_SETUP.md).
 
 ## 4. Instalar las dependencias del frontend
 
-Desde la raíz `StockIA/`:
+Este paso ya lo realiza `instalar.ps1`. Para hacerlo por separado, desde la
+raíz `StockIA/`:
 
 ```powershell
 cd frontend

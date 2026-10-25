@@ -97,6 +97,13 @@ es local y está excluido de Git; no se deben copiar las rutas de otro equipo.
 Desde la raíz del repositorio:
 
 ```powershell
+.\instalar.ps1
+```
+
+Este comando prepara el backend y ejecuta `flutter pub get` en el frontend.
+Para trabajar únicamente con Flutter, también se puede hacer por separado:
+
+```powershell
 cd frontend
 flutter pub get
 flutter analyze

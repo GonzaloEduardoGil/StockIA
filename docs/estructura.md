@@ -20,6 +20,8 @@
 | `docs/backend/` | Preparación del login y funcionamiento del Observer |
 | `frontend/requirements-dev.md` | Herramientas necesarias para desarrollar y compilar Flutter |
 | `referencias/frontend-react/` | Front anterior conservado como referencia |
+| `requirements.txt` | Dependencias Python instalables desde la raíz |
+| `instalar.ps1` | Prepara el entorno Python e instala las dependencias del backend y de Flutter |
 | `iniciar-stockia.ps1` | Inicia backend y web y abre el navegador |
 | `iniciar-backend.ps1`, `iniciar-web.ps1`, `compilar-apk.ps1` | Comandos individuales de desarrollo desde la raíz |
 
@@ -35,7 +37,14 @@ extrajo a otro archivo. Para preparar sesiones, ejecutar desde `backend/`:
 
 ## Iniciar la aplicación
 
-Desde la raíz del repositorio, con Python y Flutter ya preparados:
+Desde la raíz del repositorio, con Python y Flutter instalados, preparar las
+dependencias una vez:
+
+```powershell
+.\instalar.ps1
+```
+
+Después iniciar la aplicación:
 
 ```powershell
 .\iniciar-stockia.ps1

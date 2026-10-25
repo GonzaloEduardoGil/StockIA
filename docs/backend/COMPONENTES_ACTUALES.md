@@ -37,6 +37,8 @@ flowchart LR
 
 ```text
 StockIA/
+├── requirements.txt
+├── instalar.ps1
 ├── iniciar-stockia.ps1
 ├── iniciar-backend.ps1
 ├── iniciar-web.ps1
@@ -84,6 +86,7 @@ Los `__init__.py` de los paquetes Python se omiten del árbol para facilitar la 
   Es una tarea de preparación, no un servicio que quede ejecutándose.
 - `iniciar-stockia.ps1` coordina el arranque local; los otros `.ps1` permiten
   iniciar cada parte o compilar Android por separado.
+- `instalar.ps1` prepara las dependencias de Python y Flutter desde la raíz.
 - XGBoost se ejecuta dentro de `main.py`. La API puede generar predicciones;
   la interfaz actual consulta las que ya están guardadas.
 - `referencias/frontend-react/` conserva el front anterior como referencia.
