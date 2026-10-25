@@ -12,6 +12,9 @@ import '../models/sale_history.dart';
 import '../models/stock_alert.dart';
 import '../models/dashboard.dart';
 import '../models/product_analysis.dart';
+import '../models/recommendation.dart';
+import '../models/auth_session.dart';
+import 'session_client.dart';
 
 class ApiFailure implements Exception {
   const ApiFailure(
@@ -26,7 +29,7 @@ class ApiFailure implements Exception {
 
 class InventoryApi {
   InventoryApi({http.Client? client, String? baseUrl})
-    : _client = client ?? http.Client(),
+    : _transport = client ?? http.Client(),
       baseUrl = (baseUrl ?? configuredUrl).replaceAll(RegExp(r'/+$'), '');
   static String get configuredUrl {
     const configured = String.fromEnvironment('API_BASE_URL');
@@ -36,7 +39,10 @@ class InventoryApi {
         : 'http://127.0.0.1:8000';
   }
 
-  final http.Client _client;
+  bool _closed = false;
+  final http.Client _transport;
+  final session = ValueNotifier<AuthSession?>(null);
+  late final http.Client _client = SessionClient(_transport, session);
   final String baseUrl;
 
   Future<Map<String, dynamic>> _get(String path) async {
@@ -659,5 +665,203 @@ class InventoryApi {
     }
   }
 
-  void close() => _client.close();
+  Future<List<Recommendation>> loadRecommendations() async {
+    final data = await _get('/recomendaciones/');
+    try {
+      final rows = (data['recomendaciones'] as List<dynamic>)
+          .map((row) => Recommendation.fromApi(row as Map<String, dynamic>))
+          .toList();
+      rows.sort((a, b) {
+        final date = b.date.compareTo(a.date);
+        return date == 0 ? b.id.compareTo(a.id) : date;
+      });
+      return rows;
+    } catch (_) {
+      throw const ApiFailure(
+        'No se pudo interpretar el historial de recomendaciones.',
+      );
+    }
+  }
+
+  Future<int> generateRecommendations(int userId) async {
+    if (userId <= 0) {
+      throw const ApiFailure('Iniciá sesión para generar recomendaciones.');
+    }
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('$baseUrl/recomendaciones/generar'),
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json; charset=utf-8',
+            },
+            body: jsonEncode({'idUsuario': userId}),
+          )
+          .timeout(const Duration(seconds: 30));
+      _checkRecommendationResponse(response.statusCode);
+      final data =
+          jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+      final rows = data['recomendaciones'] as List<dynamic>;
+      if (data['cantidad'] is! int || data['cantidad'] != rows.length) {
+        throw const FormatException();
+      }
+      final ids = <int>{};
+      for (final row in rows) {
+        final item = row as Map<String, dynamic>;
+        final id = dashboardCount(item['idRecomendacion']);
+        if (id == 0 ||
+            !ids.add(id) ||
+            dashboardCount(item['idProducto']) == 0 ||
+            dashboardCount(item['cantidadSugerida']) == 0 ||
+            item['estado'] != 'Pendiente' ||
+            item['motivo'] is! String ||
+            item['nombreProducto'] is! String) {
+          throw const FormatException();
+        }
+      }
+      return rows.length;
+    } on ApiFailure {
+      rethrow;
+    } catch (_) {
+      throw const ApiFailure(
+        'No pudimos confirmar la generación. Actualizá el historial antes de intentar generar otra vez.',
+        mayHaveSaved: true,
+      );
+    }
+  }
+
+  Future<Recommendation> decideRecommendation(
+    Recommendation current,
+    int userId,
+    String status,
+  ) async {
+    if (userId <= 0 ||
+        !current.pending ||
+        !['Aceptada', 'Rechazada'].contains(status)) {
+      throw const ApiFailure(
+        'Revisá el usuario y el estado de la recomendación.',
+      );
+    }
+    try {
+      final response = await _client
+          .patch(
+            Uri.parse('$baseUrl/recomendaciones/${current.id}/decision'),
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json; charset=utf-8',
+            },
+            body: jsonEncode({'idUsuario': userId, 'estado': status}),
+          )
+          .timeout(const Duration(seconds: 20));
+      _checkRecommendationResponse(response.statusCode);
+      final data =
+          jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+      final saved = data['recomendacion'] as Map<String, dynamic>;
+      if (saved['idRecomendacion'] != current.id ||
+          saved['idProducto'] != current.productId ||
+          saved['cantidadSugerida'] != current.units ||
+          saved['estado'] != status ||
+          data['stockModificado'] != false) {
+        throw const FormatException();
+      }
+      return current.withStatus(status);
+    } on ApiFailure {
+      rethrow;
+    } catch (_) {
+      throw const ApiFailure(
+        'No pudimos confirmar la decisión. Actualizá el historial y revisá el estado antes de repetirla.',
+        mayHaveSaved: true,
+      );
+    }
+  }
+
+  void _checkRecommendationResponse(int status) {
+    if (status == 403) {
+      throw const ApiFailure(
+        'Tu usuario no tiene permiso para realizar esta operación.',
+      );
+    }
+    if (status == 404 || status == 409) {
+      throw const ApiFailure(
+        'El usuario o la recomendación ya no están disponibles para esta operación, o la decisión ya fue registrada. Se actualizará el historial.',
+        requiresRefresh: true,
+      );
+    }
+    if (status == 422) {
+      throw const ApiFailure(
+        'El servicio rechazó los datos de la recomendación. Revisá la sesión y el estado.',
+      );
+    }
+    if (status < 200 || status >= 300) {
+      throw ApiFailure(
+        'El servicio no confirmó la operación. Actualizá el historial antes de repetirla.',
+        mayHaveSaved: status >= 500,
+      );
+    }
+  }
+
+  Future<void> login(String email, String password) async {
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('$baseUrl/auth/login'),
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json; charset=utf-8',
+            },
+            body: jsonEncode({'email': email.trim(), 'password': password}),
+          )
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        throw const ApiFailure('Email o contraseña incorrectos.');
+      }
+      if (response.statusCode == 429) {
+        throw const ApiFailure(
+          'Demasiados intentos. Esperá un minuto e intentá nuevamente.',
+        );
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw const ApiFailure(
+          'No se pudo iniciar sesión. Intentá nuevamente.',
+        );
+      }
+      if (_closed) return;
+      session.value = AuthSession.fromApi(
+        jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>,
+      );
+    } on ApiFailure {
+      rethrow;
+    } catch (_) {
+      throw const ApiFailure(
+        'No pudimos conectar para iniciar sesión. Intentá nuevamente.',
+      );
+    }
+  }
+
+  Future<void> logout() async {
+    if (_closed) return;
+    final token = session.value?.token;
+    session.value = null;
+    if (token == null) return;
+    try {
+      await _transport
+          .post(
+            Uri.parse('$baseUrl/auth/logout'),
+            headers: {
+              'Accept': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          )
+          .timeout(const Duration(seconds: 15));
+    } catch (_) {
+      /* El token local ya se quitó; el remoto también tiene vencimiento. */
+    }
+  }
+
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    _client.close();
+    session.dispose();
+  }
 }

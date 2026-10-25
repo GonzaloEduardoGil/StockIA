@@ -5,3 +5,5 @@ pydantic>=2,<3
 pandas>=2.2,<3
 xgboost>=2.1,<4
 python-dotenv>=1,<2
+
+argon2-cffi>=25.1,<26

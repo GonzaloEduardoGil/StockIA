@@ -17,7 +17,7 @@ class NewSaleScreen extends StatefulWidget {
     super.key,
   });
   final InventoryApi api;
-  // TODO(auth): Recibir el ID del usuario de la sesión al integrar el login.
+  // El ID se recibe de la sesión autenticada.
   // No pedirlo en el formulario ni reemplazarlo por un vendedor fijo.
   final int? currentUserId;
   final ValueChanged<bool> onBusyChanged;

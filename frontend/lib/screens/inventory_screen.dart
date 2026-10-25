@@ -10,6 +10,7 @@ import 'movements_screen.dart';
 import 'new_sale_screen.dart';
 import 'sales_screen.dart';
 import 'alerts_screen.dart';
+import 'recommendations_screen.dart';
 import 'dashboard_screen.dart';
 import 'inventory_operation_page.dart';
 import '../models/inventory_action.dart';
@@ -19,16 +20,35 @@ class InventoryScreen extends StatefulWidget {
     required this.api,
     this.currentUserId,
     this.initialDashboard = false,
+    this.currentUserRole,
+    this.userName,
+    this.onLogout,
     super.key,
   });
   final InventoryApi api;
   final int? currentUserId;
   final bool initialDashboard;
+  final String? currentUserRole;
+  final String? userName;
+  final Future<void> Function()? onLogout;
   @override
   State<InventoryScreen> createState() => _InventoryScreenState();
 }
 
 class _InventoryScreenState extends State<InventoryScreen> {
+  bool get _stockRole =>
+      widget.currentUserRole == null ||
+      ['Administrador', 'Encargado de stock'].contains(widget.currentUserRole);
+  bool get _admin =>
+      widget.currentUserRole == null ||
+      widget.currentUserRole == 'Administrador';
+  bool get _seller =>
+      widget.currentUserRole == null || widget.currentUserRole == 'Vendedor';
+  bool _canAction(InventoryAction? action) =>
+      action == null ||
+      (action == InventoryAction.edit || action == InventoryAction.deactivate
+          ? _admin
+          : _stockRole);
   final _search = TextEditingController();
   List<Product> _products = [];
   Product? _selected;
@@ -37,6 +57,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
   bool _salesVisible = false;
   bool _salesHistory = false;
   bool _alertsVisible = false;
+  bool _recommendationsVisible = false;
   int? _alertProductId;
   int _alertsVisit = 0;
   int? _notifiedLowCount;
@@ -53,14 +74,13 @@ class _InventoryScreenState extends State<InventoryScreen> {
   @override
   void initState() {
     super.initState();
-    _dashboardVisible = widget.initialDashboard;
+    _dashboardVisible = widget.initialDashboard && _stockRole;
     _reload();
   }
 
   @override
   void dispose() {
     _search.dispose();
-    widget.api.close();
     super.dispose();
   }
 
@@ -109,6 +129,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 
   Future<void> _newProduct() async {
+    if (!_admin) return;
     final result = await openNewProduct(context, widget.api);
     if (!mounted || result == null) return;
     setState(() {
@@ -186,6 +207,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
           body: Padding(
             padding: const EdgeInsets.all(16),
             child: ProductDetails(
+              canManageProducts: _admin,
+              canManageStock: _stockRole,
               product: p,
               api: widget.api,
               onClose: () => Navigator.pop(context),
@@ -202,8 +225,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 
   void _startAction(InventoryAction? action, [Product? product]) {
+    if (!_canAction(action)) return;
     if (_operationBusy) return;
     setState(() {
+      _recommendationsVisible = false;
       _dashboardVisible = false;
       _alertsVisible = false;
       _salesVisible = false;
@@ -228,8 +253,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 
   void _openMovements() {
+    if (!_stockRole) return;
     if (_operationBusy) return;
     setState(() {
+      _recommendationsVisible = false;
       _dashboardVisible = false;
       _alertsVisible = false;
       _salesVisible = false;
@@ -240,8 +267,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 
   void _openNewSale() {
+    if (!_seller) return;
     if (_operationBusy) return;
     setState(() {
+      _recommendationsVisible = false;
       _dashboardVisible = false;
       _alertsVisible = false;
       _salesVisible = true;
@@ -254,13 +283,23 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
   void _openSalesHistory() {
     if (_operationBusy) return;
-    _openNewSale();
-    setState(() => _salesHistory = true);
+    setState(() {
+      _recommendationsVisible = false;
+      _dashboardVisible = false;
+      _alertsVisible = false;
+      _salesVisible = true;
+      _salesHistory = true;
+      _movementsVisible = false;
+      _action = null;
+      _operationProduct = null;
+    });
   }
 
   void _openAlerts([int? productId]) {
+    if (!_stockRole) return;
     if (_operationBusy) return;
     setState(() {
+      _recommendationsVisible = false;
       _alertProductId = productId;
       ++_alertsVisit;
       _dashboardVisible = false;
@@ -273,10 +312,26 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 
   void _openDashboard() {
+    if (!_stockRole) return;
     if (_operationBusy) return;
     setState(() {
+      _recommendationsVisible = false;
       _analysisProductId = null;
       _dashboardVisible = true;
+      _alertsVisible = false;
+      _salesVisible = false;
+      _movementsVisible = false;
+      _action = null;
+      _operationProduct = null;
+    });
+  }
+
+  void _openRecommendations() {
+    if (!_stockRole) return;
+    if (_operationBusy) return;
+    setState(() {
+      _recommendationsVisible = true;
+      _dashboardVisible = false;
       _alertsVisible = false;
       _salesVisible = false;
       _movementsVisible = false;
@@ -340,13 +395,15 @@ class _InventoryScreenState extends State<InventoryScreen> {
       final wide = viewport.maxWidth >= 1280;
       return PopScope(
         canPop:
+            !_recommendationsVisible &&
             !_dashboardVisible &&
             !_alertsVisible &&
             !_movementsVisible &&
             !_salesVisible,
         onPopInvokedWithResult: (didPop, result) {
           if (!didPop &&
-              (_dashboardVisible ||
+              (_recommendationsVisible ||
+                  _dashboardVisible ||
                   _alertsVisible ||
                   _movementsVisible ||
                   _salesVisible) &&
@@ -375,7 +432,14 @@ class _InventoryScreenState extends State<InventoryScreen> {
                     children: [
                       _header(desktop, mobile),
                       Expanded(
-                        child: _dashboardVisible
+                        child: _recommendationsVisible
+                            ? RecommendationsScreen(
+                                api: widget.api,
+                                currentUserId: widget.currentUserId,
+                                onBusyChanged: (busy) =>
+                                    setState(() => _operationBusy = busy),
+                              )
+                            : _dashboardVisible
                             ? DashboardScreen(
                                 api: widget.api,
                                 onInventory: () => _startAction(null),
@@ -436,7 +500,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
                                           CrossAxisAlignment.start,
                                       children: [
                                         _title(mobile),
-                                        if (_lowProducts.isNotEmpty)
+                                        if (_stockRole &&
+                                            _lowProducts.isNotEmpty)
                                           _stockNotice(),
                                         const SizedBox(height: 28),
                                         _filters(mobile),
@@ -486,6 +551,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
                                                 SizedBox(
                                                   width: 310,
                                                   child: ProductDetails(
+                                                    canManageProducts: _admin,
+                                                    canManageStock: _stockRole,
                                                     onChanged: _afterEdit,
                                                     onAction: _startAction,
                                                     product: _selected!,
@@ -564,18 +631,19 @@ class _InventoryScreenState extends State<InventoryScreen> {
       color: Colors.white,
       child: Column(
         children: [
-          ListTile(
-            key: const Key('nav-dashboard'),
-            leading: const Icon(Icons.dashboard_outlined, color: navy),
-            title: const Text('Inicio'),
-            selected: _dashboardVisible,
-            selectedTileColor: const Color(0xFFEBF1F9),
-            enabled: !_operationBusy,
-            onTap: () {
-              if (drawer) Navigator.pop(context);
-              _openDashboard();
-            },
-          ),
+          if (_stockRole)
+            ListTile(
+              key: const Key('nav-dashboard'),
+              leading: const Icon(Icons.dashboard_outlined, color: navy),
+              title: const Text('Inicio'),
+              selected: _dashboardVisible,
+              selectedTileColor: const Color(0xFFEBF1F9),
+              enabled: !_operationBusy,
+              onTap: () {
+                if (drawer) Navigator.pop(context);
+                _openDashboard();
+              },
+            ),
           ExpansionTile(
             key: const PageStorageKey('inventory-navigation'),
             initiallyExpanded: true,
@@ -586,6 +654,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                 key: const Key('nav-inventory'),
                 contentPadding: const EdgeInsets.only(left: 36, right: 12),
                 selected:
+                    !_recommendationsVisible &&
                     !_dashboardVisible &&
                     !_alertsVisible &&
                     !_salesVisible &&
@@ -599,47 +668,68 @@ class _InventoryScreenState extends State<InventoryScreen> {
                 ),
                 onTap: () => select(null),
               ),
-              ...InventoryAction.values.map(
-                (action) => ListTile(
-                  key: ValueKey('nav-${action.name}'),
-                  contentPadding: const EdgeInsets.only(left: 36, right: 12),
-                  selected:
-                      !_dashboardVisible &&
-                      !_alertsVisible &&
-                      !_salesVisible &&
-                      !_movementsVisible &&
-                      _action == action,
-                  selectedTileColor: const Color(0xFFEBF1F9),
-                  enabled: !_operationBusy,
-                  title: Text(action.label, style: TextStyle(fontSize: 13)),
-                  onTap: () => select(action),
-                ),
-              ),
+              ...InventoryAction.values
+                  .where(_canAction)
+                  .map(
+                    (action) => ListTile(
+                      key: ValueKey('nav-${action.name}'),
+                      contentPadding: const EdgeInsets.only(
+                        left: 36,
+                        right: 12,
+                      ),
+                      selected:
+                          !_recommendationsVisible &&
+                          !_dashboardVisible &&
+                          !_alertsVisible &&
+                          !_salesVisible &&
+                          !_movementsVisible &&
+                          _action == action,
+                      selectedTileColor: const Color(0xFFEBF1F9),
+                      enabled: !_operationBusy,
+                      title: Text(action.label, style: TextStyle(fontSize: 13)),
+                      onTap: () => select(action),
+                    ),
+                  ),
             ],
           ),
-          ListTile(
-            leading: const Icon(Icons.history, color: navy),
-            title: const Text('Movimientos'),
-            selected: _movementsVisible,
-            selectedTileColor: const Color(0xFFEBF1F9),
-            enabled: !_operationBusy,
-            onTap: () {
-              if (drawer) Navigator.pop(context);
-              _openMovements();
-            },
-          ),
-          ListTile(
-            key: const Key('nav-alerts'),
-            leading: const Icon(Icons.notifications_outlined, color: navy),
-            title: const Text('Alertas'),
-            selected: _alertsVisible,
-            selectedTileColor: const Color(0xFFEBF1F9),
-            enabled: !_operationBusy,
-            onTap: () {
-              if (drawer) Navigator.pop(context);
-              _openAlerts();
-            },
-          ),
+          if (_stockRole)
+            ListTile(
+              leading: const Icon(Icons.history, color: navy),
+              title: const Text('Movimientos'),
+              selected: _movementsVisible,
+              selectedTileColor: const Color(0xFFEBF1F9),
+              enabled: !_operationBusy,
+              onTap: () {
+                if (drawer) Navigator.pop(context);
+                _openMovements();
+              },
+            ),
+          if (_stockRole)
+            ListTile(
+              key: const Key('nav-recommendations'),
+              leading: const Icon(Icons.auto_awesome_outlined, color: navy),
+              title: const Text('Recomendaciones'),
+              selected: _recommendationsVisible,
+              selectedTileColor: const Color(0xFFEBF1F9),
+              enabled: !_operationBusy,
+              onTap: () {
+                if (drawer) Navigator.pop(context);
+                _openRecommendations();
+              },
+            ),
+          if (_stockRole)
+            ListTile(
+              key: const Key('nav-alerts'),
+              leading: const Icon(Icons.notifications_outlined, color: navy),
+              title: const Text('Alertas'),
+              selected: _alertsVisible,
+              selectedTileColor: const Color(0xFFEBF1F9),
+              enabled: !_operationBusy,
+              onTap: () {
+                if (drawer) Navigator.pop(context);
+                _openAlerts();
+              },
+            ),
           ExpansionTile(
             key: const PageStorageKey('sales-navigation'),
             initiallyExpanded: true,
@@ -661,21 +751,22 @@ class _InventoryScreenState extends State<InventoryScreen> {
                   _openSalesHistory();
                 },
               ),
-              ListTile(
-                key: const Key('nav-new-sale'),
-                selected: _salesVisible && !_salesHistory,
-                selectedTileColor: const Color(0xFFEBF1F9),
-                enabled: !_operationBusy,
-                contentPadding: const EdgeInsets.only(left: 36, right: 12),
-                title: const Text(
-                  'Registrar venta',
-                  style: TextStyle(fontSize: 13),
+              if (_seller)
+                ListTile(
+                  key: const Key('nav-new-sale'),
+                  selected: _salesVisible && !_salesHistory,
+                  selectedTileColor: const Color(0xFFEBF1F9),
+                  enabled: !_operationBusy,
+                  contentPadding: const EdgeInsets.only(left: 36, right: 12),
+                  title: const Text(
+                    'Registrar venta',
+                    style: TextStyle(fontSize: 13),
+                  ),
+                  onTap: () {
+                    if (drawer) Navigator.pop(context);
+                    _openNewSale();
+                  },
                 ),
-                onTap: () {
-                  if (drawer) Navigator.pop(context);
-                  _openNewSale();
-                },
-              ),
             ],
           ),
         ],
@@ -724,7 +815,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
   );
   Widget _header(bool desktop, bool mobile) => Container(
     height: mobile ? 86 : 76,
-    padding: EdgeInsets.symmetric(horizontal: mobile ? 20 : 32),
+    padding: EdgeInsets.symmetric(horizontal: mobile ? 12 : 32),
     decoration: const BoxDecoration(
       color: Colors.white,
       border: Border(bottom: BorderSide(color: line)),
@@ -741,7 +832,9 @@ class _InventoryScreenState extends State<InventoryScreen> {
         if (desktop) const Spacer(),
         if (!mobile)
           Text(
-            _dashboardVisible
+            _recommendationsVisible
+                ? 'Recomendaciones'
+                : _dashboardVisible
                 ? (_analysisProductId == null
                       ? 'Inicio'
                       : 'Análisis del producto')
@@ -763,7 +856,35 @@ class _InventoryScreenState extends State<InventoryScreen> {
               icon: const Icon(Icons.menu, color: navy),
             ),
           ),
-        _alertButton(),
+        if (widget.onLogout != null)
+          PopupMenuButton<String>(
+            key: const Key('session-account'),
+            tooltip: 'Mi cuenta',
+            enabled: !_operationBusy,
+            icon: const Icon(Icons.account_circle_outlined, color: navy),
+            onSelected: (value) async {
+              if (value == 'logout') await widget.onLogout?.call();
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem<String>(
+                enabled: false,
+                child: Text(
+                  widget.userName ?? 'Mi cuenta',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              PopupMenuItem<String>(
+                enabled: false,
+                child: Text(widget.currentUserRole ?? ''),
+              ),
+              const PopupMenuDivider(),
+              const PopupMenuItem<String>(
+                value: 'logout',
+                child: Text('Cerrar sesión'),
+              ),
+            ],
+          ),
+        if (_stockRole) _alertButton(),
       ],
     ),
   );
@@ -800,11 +921,12 @@ class _InventoryScreenState extends State<InventoryScreen> {
               icon: const Icon(Icons.refresh, size: 18),
               label: const Text('Actualizar'),
             ),
-            FilledButton.icon(
-              onPressed: _newProduct,
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('Nuevo producto'),
-            ),
+            if (_admin)
+              FilledButton.icon(
+                onPressed: _newProduct,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Nuevo producto'),
+              ),
           ],
         ),
       ],

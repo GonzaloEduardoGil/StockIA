@@ -38,10 +38,14 @@ class ProductDetails extends StatefulWidget {
     required this.onClose,
     this.onChanged,
     this.onAction,
+    this.canManageProducts = true,
+    this.canManageStock = true,
     super.key,
   });
   final void Function(InventoryAction, Product)? onAction;
   final Product product;
+  final bool canManageProducts;
+  final bool canManageStock;
   final InventoryApi api;
   final VoidCallback onClose;
   final Future<void> Function(ProductCreationResult)? onChanged;
@@ -269,58 +273,66 @@ class _ProductDetailsState extends State<ProductDetails> {
                         : 'Sin descripción registrada.',
                     style: const TextStyle(color: muted, height: 1.7),
                   ),
-                  if (snapshot.hasData) ...[
+                  if (snapshot.hasData &&
+                      (widget.canManageProducts || widget.canManageStock)) ...[
                     const SizedBox(height: 24),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton.icon(
-                        onPressed: _editing ? null : () => _registerEntry(p),
-                        icon: const Icon(Icons.add_box_outlined, size: 18),
-                        label: const Text('Registrar entrada'),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: _editing
-                            ? null
-                            : () => _registerAdjustment(p),
-                        icon: const Icon(Icons.swap_vert, size: 18),
-                        label: const Text('Registrar ajuste'),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: _editing ? null : () => _edit(p),
-                        icon: const Icon(Icons.edit_outlined, size: 18),
-                        label: const Text('Editar producto'),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: _editing ? null : () => _configureMinimum(p),
-                        icon: const Icon(Icons.tune, size: 18),
-                        label: const Text('Configurar stock mínimo'),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: _editing ? null : () => _deactivate(p),
-                        style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: Color(0xFFB23C3C)),
-                          foregroundColor: const Color(0xFFB23C3C),
+                    if (widget.canManageStock)
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: _editing ? null : () => _registerEntry(p),
+                          icon: const Icon(Icons.add_box_outlined, size: 18),
+                          label: const Text('Registrar entrada'),
                         ),
-                        icon: const Icon(Icons.archive_outlined, size: 18),
-                        label: const Text('Dar de baja'),
                       ),
-                    ),
+                    const SizedBox(height: 10),
+                    if (widget.canManageStock)
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _editing
+                              ? null
+                              : () => _registerAdjustment(p),
+                          icon: const Icon(Icons.swap_vert, size: 18),
+                          label: const Text('Registrar ajuste'),
+                        ),
+                      ),
+                    const SizedBox(height: 10),
+                    if (widget.canManageProducts)
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _editing ? null : () => _edit(p),
+                          icon: const Icon(Icons.edit_outlined, size: 18),
+                          label: const Text('Editar producto'),
+                        ),
+                      ),
+                    const SizedBox(height: 10),
+                    if (widget.canManageStock)
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _editing
+                              ? null
+                              : () => _configureMinimum(p),
+                          icon: const Icon(Icons.tune, size: 18),
+                          label: const Text('Configurar stock mínimo'),
+                        ),
+                      ),
+                    const SizedBox(height: 10),
+                    if (widget.canManageProducts)
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _editing ? null : () => _deactivate(p),
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Color(0xFFB23C3C)),
+                            foregroundColor: const Color(0xFFB23C3C),
+                          ),
+                          icon: const Icon(Icons.archive_outlined, size: 18),
+                          label: const Text('Dar de baja'),
+                        ),
+                      ),
                   ],
                 ],
               );

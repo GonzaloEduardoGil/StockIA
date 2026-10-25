@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'data/inventory_api.dart';
 import 'screens/inventory_screen.dart';
+import 'widgets/auth_gate.dart';
 
 const navy = Color(0xFF315A86);
 const ink = Color(0xFF203B5A);
@@ -9,19 +10,37 @@ const muted = Color(0xFF76849B);
 const canvas = Color(0xFFF5F6FB);
 const line = Color(0xFFE7EBF2);
 
-class StockiaApp extends StatelessWidget {
+class StockiaApp extends StatefulWidget {
   const StockiaApp({
     super.key,
     this.api,
     this.currentUserId,
     this.initialDashboard = false,
+    this.requireLogin = false,
   });
   final InventoryApi? api;
   final bool initialDashboard;
-  // TODO(auth): Conectar con el usuario autenticado de la sesión, sin ID fijo.
-  // Hasta integrar el login, mantener null: la UI permite armar y revisar ventas,
-  // pero no envía confirmaciones al backend.
+  final bool requireLogin;
+  // Identidad inyectable para las pruebas de pantallas; el arranque real usa AuthGate.
   final int? currentUserId;
+  @override
+  State<StockiaApp> createState() => _StockiaAppState();
+}
+
+class _StockiaAppState extends State<StockiaApp> {
+  late final InventoryApi _api;
+  @override
+  void initState() {
+    super.initState();
+    _api = widget.api ?? InventoryApi();
+  }
+
+  @override
+  void dispose() {
+    _api.close();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: 'StockIA · Inventario',
@@ -72,10 +91,12 @@ class StockiaApp extends StatelessWidget {
       ),
       dividerColor: line,
     ),
-    home: InventoryScreen(
-      api: api ?? InventoryApi(),
-      initialDashboard: initialDashboard,
-      currentUserId: currentUserId,
-    ),
+    home: widget.requireLogin
+        ? AuthGate(api: _api)
+        : InventoryScreen(
+            api: _api,
+            initialDashboard: widget.initialDashboard,
+            currentUserId: widget.currentUserId,
+          ),
   );
 }
