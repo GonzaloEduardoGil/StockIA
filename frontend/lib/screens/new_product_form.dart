@@ -10,10 +10,16 @@ class ProductCreationResult {
     this.id,
     this.uncertain = false,
     this.deactivated = false,
+    this.minimumChanged = false,
+    this.entryQuantity,
+    this.adjustmentQuantity,
   });
   final int? id;
   final bool uncertain;
   final bool deactivated;
+  final bool minimumChanged;
+  final int? entryQuantity;
+  final int? adjustmentQuantity;
 }
 
 Future<ProductCreationResult?> openNewProduct(
@@ -57,7 +63,17 @@ Future<ProductCreationResult?> _openProductForm(
 }
 
 class NewProductForm extends StatefulWidget {
-  const NewProductForm({required this.api, this.product, super.key});
+  const NewProductForm({
+    required this.api,
+    this.product,
+    this.embedded = false,
+    this.onCompleted,
+    this.onBusyChanged,
+    super.key,
+  });
+  final bool embedded;
+  final ValueChanged<ProductCreationResult?>? onCompleted;
+  final ValueChanged<bool>? onBusyChanged;
   final InventoryApi api;
   final Product? product;
   @override
@@ -127,6 +143,7 @@ class _NewProductFormState extends State<NewProductForm> {
 
   Future<void> _save() async {
     if (_saving || _uncertain || _review == null) return;
+    widget.onBusyChanged?.call(true);
     setState(() {
       _saving = true;
       _error = null;
@@ -137,7 +154,7 @@ class _NewProductFormState extends State<NewProductForm> {
           : await widget.api.createProduct(_review!);
       if (!mounted) return;
       setState(() => _saving = false);
-      Navigator.pop(context, ProductCreationResult(id: id));
+      _finish(ProductCreationResult(id: id));
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -149,15 +166,22 @@ class _NewProductFormState extends State<NewProductForm> {
             error is ApiFailure &&
             (error.mayHaveSaved || error.requiresRefresh);
       });
+      widget.onBusyChanged?.call(_uncertain);
     }
   }
 
   void _close() {
     if (_saving) return;
-    Navigator.pop(
-      context,
-      _uncertain ? const ProductCreationResult(uncertain: true) : null,
-    );
+    _finish(_uncertain ? const ProductCreationResult(uncertain: true) : null);
+  }
+
+  void _finish(ProductCreationResult? result) {
+    widget.onBusyChanged?.call(false);
+    if (widget.onCompleted != null) {
+      widget.onCompleted!(result);
+    } else {
+      Navigator.pop(context, result);
+    }
   }
 
   @override
@@ -167,6 +191,7 @@ class _NewProductFormState extends State<NewProductForm> {
       color: Colors.white,
       child: SafeArea(
         child: Column(
+          mainAxisSize: widget.embedded ? MainAxisSize.min : MainAxisSize.max,
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 18, 16, 16),
@@ -186,15 +211,6 @@ class _NewProductFormState extends State<NewProductForm> {
                                     : 'Revisar producto'),
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
-                        const SizedBox(height: 6),
-                        Text(
-                          _review == null
-                              ? 'Completá los datos y revisalos antes de guardar.'
-                              : (_editing
-                                    ? 'Comprobá las modificaciones antes de guardarlas.'
-                                    : 'Comprobá los datos antes de confirmar el registro.'),
-                          style: const TextStyle(color: muted, fontSize: 13),
-                        ),
                       ],
                     ),
                   ),
@@ -207,7 +223,8 @@ class _NewProductFormState extends State<NewProductForm> {
               ),
             ),
             const Divider(height: 1),
-            Expanded(
+            Flexible(
+              fit: widget.embedded ? FlexFit.loose : FlexFit.tight,
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(24),
                 child: Column(
@@ -413,9 +430,7 @@ class _NewProductFormState extends State<NewProductForm> {
         ],
         const SizedBox(height: 24),
         Text(
-          _editing
-              ? 'Código ${widget.product!.id}. Se conservan el stock, el mínimo y el historial del producto.'
-              : '* Campos obligatorios. El código se asigna al guardar.',
+          _editing ? 'Código ${widget.product!.id}' : '* Campos obligatorios.',
           style: const TextStyle(color: muted, fontSize: 12, height: 1.6),
         ),
       ],
@@ -472,13 +487,6 @@ class _NewProductFormState extends State<NewProductForm> {
         product.description?.isNotEmpty == true
             ? product.description!
             : 'Sin descripción',
-      ),
-      const SizedBox(height: 24),
-      Text(
-        _editing
-            ? 'Al confirmar se guardarán los datos modificados. El código, las existencias y el historial se conservarán.'
-            : 'Al confirmar se guardarán el producto y su stock inicial.',
-        style: const TextStyle(color: muted, height: 1.6),
       ),
     ],
   );

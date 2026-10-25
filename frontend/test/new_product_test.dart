@@ -1,3 +1,5 @@
+import 'tap_visible.dart';
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -28,7 +30,7 @@ Future<void> fill(WidgetTester tester) async {
   await tester.enterText(find.byKey(const Key('product-minimum')), '5');
   await tester.ensureVisible(find.byKey(const Key('product-initial')));
   await tester.enterText(find.byKey(const Key('product-initial')), '12');
-  await tester.tap(find.text('Revisar datos'));
+  await tapVisible(tester, find.text('Revisar datos'));
   await tester.pumpAndSettle();
 }
 
@@ -95,13 +97,13 @@ void main() {
     );
     await tester.pumpWidget(StockiaApp(api: client));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Nuevo producto'));
+    await tapVisible(tester, find.text('Nuevo producto'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Revisar datos'));
+    await tapVisible(tester, find.text('Revisar datos'));
     await tester.pumpAndSettle();
     expect(find.text('Confirmar registro'), findsNothing);
     expect(posts, 0);
-    await tester.tap(find.text('Cancelar'));
+    await tapVisible(tester, find.text('Cancelar'));
     await tester.pumpAndSettle();
     expect(find.byType(NewProductForm), findsNothing);
     expect(posts, 0);
@@ -137,12 +139,12 @@ void main() {
       );
       await tester.pumpWidget(StockiaApp(api: client));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Nuevo producto'));
+      await tapVisible(tester, find.text('Nuevo producto'));
       await tester.pumpAndSettle();
       await fill(tester);
       expect(posts, 0);
       expect(find.text(r'$ 18.500,50'), findsOneWidget);
-      await tester.tap(find.text('Editar datos'));
+      await tapVisible(tester, find.text('Editar datos'));
       await tester.pumpAndSettle();
       expect(
         tester
@@ -151,9 +153,9 @@ void main() {
             .text,
         '  Producto nuevo  ',
       );
-      await tester.tap(find.text('Revisar datos'));
+      await tapVisible(tester, find.text('Revisar datos'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Confirmar registro'));
+      await tapVisible(tester, find.text('Confirmar registro'));
       await tester.pump();
       expect(posts, 1);
       expect(find.text('Guardando…'), findsOneWidget);
@@ -182,15 +184,15 @@ void main() {
       );
       await tester.pumpWidget(StockiaApp(api: client));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Nuevo producto'));
+      await tapVisible(tester, find.text('Nuevo producto'));
       await tester.pumpAndSettle();
       await fill(tester);
-      await tester.tap(find.text('Confirmar registro'));
+      await tapVisible(tester, find.text('Confirmar registro'));
       await tester.pumpAndSettle();
       expect(find.textContaining('SQL password'), findsNothing);
       expect(find.text('Producto nuevo'), findsOneWidget);
       expect(find.text('Confirmar registro'), findsOneWidget);
-      await tester.tap(find.text('Editar datos'));
+      await tapVisible(tester, find.text('Editar datos'));
       await tester.pumpAndSettle();
       expect(
         tester
@@ -217,13 +219,13 @@ void main() {
       );
       await tester.pumpWidget(StockiaApp(api: client));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Nuevo producto'));
+      await tapVisible(tester, find.text('Nuevo producto'));
       await tester.pumpAndSettle();
       await fill(tester);
-      await tester.tap(find.text('Confirmar registro'));
+      await tapVisible(tester, find.text('Confirmar registro'));
       await tester.pumpAndSettle();
       expect(find.text('Confirmar registro'), findsNothing);
-      await tester.tap(find.text('Volver al inventario'));
+      await tapVisible(tester, find.text('Volver al inventario'));
       await tester.pumpAndSettle();
       expect(find.byType(NewProductForm), findsNothing);
       expect(posts, 1);
@@ -237,7 +239,7 @@ void main() {
       );
       await tester.pumpWidget(StockiaApp(api: client));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Nuevo producto'));
+      await tapVisible(tester, find.text('Nuevo producto'));
       await tester.pumpAndSettle();
       await fill(tester);
       expect(find.text('Revisar producto'), findsOneWidget);

@@ -1,3 +1,5 @@
+import 'tap_visible.dart';
+
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -116,13 +118,13 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(StockiaApp(api: api()));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Stock bajo'));
+    await tapVisible(tester, find.text('Stock bajo'));
     await tester.pumpAndSettle();
     expect(find.text('Teclado mecánico'), findsNothing);
     await tester.enterText(find.byType(TextField), 'inalambrico');
     await tester.pumpAndSettle();
     expect(find.text('Cable USB-C'), findsNothing);
-    await tester.tap(find.text('Mouse inalámbrico'));
+    await tapVisible(tester, find.text('Mouse inalámbrico'));
     await tester.pumpAndSettle();
     expect(find.text('Detalle del producto'), findsOneWidget);
     expect(find.text('Mouse de prueba'), findsOneWidget);
@@ -139,7 +141,7 @@ void main() {
       expect(find.textContaining('error privado'), findsNothing);
       failing = false;
       await tester.ensureVisible(find.text('Reintentar'));
-      await tester.tap(find.text('Reintentar'));
+      await tapVisible(tester, find.text('Reintentar'));
       await tester.pumpAndSettle();
       expect(find.text('Mouse inalámbrico'), findsOneWidget);
     },
@@ -154,7 +156,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       await tester.ensureVisible(find.text('Mouse inalámbrico'));
-      await tester.tap(find.text('Mouse inalámbrico'));
+      await tapVisible(tester, find.text('Mouse inalámbrico'));
       await tester.pumpAndSettle();
       expect(find.text('Detalle del producto'), findsOneWidget);
       expect(tester.takeException(), isNull);

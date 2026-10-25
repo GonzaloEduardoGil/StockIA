@@ -1,3 +1,5 @@
+import 'tap_visible.dart';
+
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -78,10 +80,10 @@ Future<void> openEdit(WidgetTester tester, EditFixture fixture) async {
   await tester.pumpWidget(StockiaApp(api: fixture.api));
   await tester.pumpAndSettle();
   await tester.ensureVisible(find.text('Mouse original'));
-  await tester.tap(find.text('Mouse original'));
+  await tapVisible(tester, find.text('Mouse original'));
   await tester.pumpAndSettle();
-  await tester.ensureVisible(find.text('Editar producto'));
-  await tester.tap(find.text('Editar producto'));
+  await tester.ensureVisible(find.text('Editar producto').last);
+  await tapVisible(tester, find.text('Editar producto').last);
   await tester.pumpAndSettle();
 }
 
@@ -92,7 +94,7 @@ Future<void> review(WidgetTester tester) async {
   );
   await tester.ensureVisible(find.byKey(const Key('product-price')));
   await tester.enterText(find.byKey(const Key('product-price')), '18.500,50');
-  await tester.tap(find.text('Revisar datos'));
+  await tapVisible(tester, find.text('Revisar datos'));
   await tester.pumpAndSettle();
 }
 
@@ -144,7 +146,7 @@ void main() {
       );
       expect(find.byKey(const Key('product-minimum')), findsNothing);
       expect(find.byKey(const Key('product-initial')), findsNothing);
-      await tester.tap(find.text('Cancelar'));
+      await tapVisible(tester, find.text('Cancelar'));
       await tester.pumpAndSettle();
       expect(fixture.writes, 0);
     },
@@ -160,7 +162,7 @@ void main() {
       expect(fixture.writes, 0);
       expect(find.text('Revisar cambios'), findsOneWidget);
       expect(find.text('Stock actual (sin cambios)'), findsOneWidget);
-      await tester.tap(find.text('Confirmar cambios'));
+      await tapVisible(tester, find.text('Confirmar cambios'));
       await tester.pumpAndSettle();
       expect(fixture.writes, 1);
       expect(fixture.name, 'Mouse actualizado');
@@ -183,11 +185,11 @@ void main() {
         final fixture = EditFixture()..status = status;
         await openEdit(tester, fixture);
         await review(tester);
-        await tester.tap(find.text('Confirmar cambios'));
+        await tapVisible(tester, find.text('Confirmar cambios'));
         await tester.pumpAndSettle();
         expect(find.textContaining('ya no está disponible'), findsOneWidget);
         expect(find.text('Confirmar cambios'), findsNothing);
-        await tester.tap(find.text('Volver al inventario'));
+        await tapVisible(tester, find.text('Volver al inventario'));
         await tester.pumpAndSettle();
         expect(fixture.writes, 1);
         expect(find.byType(NewProductForm), findsNothing);
@@ -201,10 +203,10 @@ void main() {
     final fixture = EditFixture()..status = 422;
     await openEdit(tester, fixture);
     await review(tester);
-    await tester.tap(find.text('Confirmar cambios'));
+    await tapVisible(tester, find.text('Confirmar cambios'));
     await tester.pumpAndSettle();
     expect(find.textContaining('error interno'), findsNothing);
-    await tester.tap(find.text('Editar datos'));
+    await tapVisible(tester, find.text('Editar datos'));
     await tester.pumpAndSettle();
     expect(
       tester

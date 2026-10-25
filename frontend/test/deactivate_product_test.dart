@@ -1,3 +1,5 @@
+import 'tap_visible.dart';
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -79,10 +81,10 @@ Future<void> openConfirmation(WidgetTester tester, Fixture fixture) async {
   await tester.pumpWidget(StockiaApp(api: fixture.api));
   await tester.pumpAndSettle();
   await tester.ensureVisible(find.text('Mouse de prueba'));
-  await tester.tap(find.text('Mouse de prueba'));
+  await tapVisible(tester, find.text('Mouse de prueba'));
   await tester.pumpAndSettle();
-  await tester.ensureVisible(find.text('Dar de baja'));
-  await tester.tap(find.text('Dar de baja'));
+  await tester.ensureVisible(find.text('Dar de baja').last);
+  await tapVisible(tester, find.text('Dar de baja').last);
   await tester.pumpAndSettle();
 }
 
@@ -105,11 +107,11 @@ void main() {
     final fixture = Fixture();
     await openConfirmation(tester, fixture);
     expect(
-      find.textContaining('No se eliminará de la base de datos'),
+      find.textContaining('Se conservarán sus datos e historial.'),
       findsOneWidget,
     );
     expect(fixture.writes, 0);
-    await tester.tap(find.text('Cancelar'));
+    await tapVisible(tester, find.text('Cancelar'));
     await tester.pumpAndSettle();
     expect(fixture.writes, 0);
     expect(find.byType(DeactivateProductDialog), findsNothing);
@@ -122,7 +124,7 @@ void main() {
         size(tester, width);
         final fixture = Fixture();
         await openConfirmation(tester, fixture);
-        await tester.tap(find.text('Confirmar baja'));
+        await tapVisible(tester, find.text('Confirmar baja'));
         await tester.pumpAndSettle();
         expect(fixture.writes, 1);
         expect(find.byType(DeactivateProductDialog), findsNothing);
@@ -143,7 +145,7 @@ void main() {
     size(tester, 1440);
     final fixture = Fixture()..pending = Completer<void>();
     await openConfirmation(tester, fixture);
-    await tester.tap(find.text('Confirmar baja'));
+    await tapVisible(tester, find.text('Confirmar baja'));
     await tester.pump();
     expect(fixture.writes, 1);
     expect(find.text('Procesando…'), findsOneWidget);
@@ -172,11 +174,11 @@ void main() {
         size(tester, 1440);
         final fixture = Fixture()..status = status;
         await openConfirmation(tester, fixture);
-        await tester.tap(find.text('Confirmar baja'));
+        await tapVisible(tester, find.text('Confirmar baja'));
         await tester.pumpAndSettle();
         expect(find.text('Confirmar baja'), findsNothing);
         expect(find.textContaining('detalle privado'), findsNothing);
-        await tester.tap(find.text('Actualizar inventario'));
+        await tapVisible(tester, find.text('Actualizar inventario'));
         await tester.pumpAndSettle();
         expect(find.byType(DeactivateProductDialog), findsNothing);
         expect(
@@ -193,14 +195,14 @@ void main() {
       size(tester, 1440);
       final fixture = Fixture()..offline = true;
       await openConfirmation(tester, fixture);
-      await tester.tap(find.text('Confirmar baja'));
+      await tapVisible(tester, find.text('Confirmar baja'));
       await tester.pumpAndSettle();
       expect(find.text('Confirmar baja'), findsNothing);
       expect(
         find.textContaining('No pudimos confirmar el resultado'),
         findsOneWidget,
       );
-      await tester.tap(find.text('Actualizar inventario'));
+      await tapVisible(tester, find.text('Actualizar inventario'));
       await tester.pumpAndSettle();
       expect(fixture.writes, 1);
     },

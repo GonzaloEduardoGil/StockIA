@@ -10,8 +10,18 @@ const canvas = Color(0xFFF5F6FB);
 const line = Color(0xFFE7EBF2);
 
 class StockiaApp extends StatelessWidget {
-  const StockiaApp({super.key, this.api});
+  const StockiaApp({
+    super.key,
+    this.api,
+    this.currentUserId,
+    this.initialDashboard = false,
+  });
   final InventoryApi? api;
+  final bool initialDashboard;
+  // TODO(auth): Conectar con el usuario autenticado de la sesión, sin ID fijo.
+  // Hasta integrar el login, mantener null: la UI permite armar y revisar ventas,
+  // pero no envía confirmaciones al backend.
+  final int? currentUserId;
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: 'StockIA · Inventario',
@@ -62,6 +72,10 @@ class StockiaApp extends StatelessWidget {
       ),
       dividerColor: line,
     ),
-    home: InventoryScreen(api: api ?? InventoryApi()),
+    home: InventoryScreen(
+      api: api ?? InventoryApi(),
+      initialDashboard: initialDashboard,
+      currentUserId: currentUserId,
+    ),
   );
 }

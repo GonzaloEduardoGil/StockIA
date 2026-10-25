@@ -4,11 +4,26 @@ import '../app.dart';
 import '../data/inventory_api.dart';
 import '../models/product.dart';
 import '../widgets/product_details.dart';
+import '../widgets/stock_notifications.dart';
 import 'new_product_form.dart';
+import 'movements_screen.dart';
+import 'new_sale_screen.dart';
+import 'sales_screen.dart';
+import 'alerts_screen.dart';
+import 'dashboard_screen.dart';
+import 'inventory_operation_page.dart';
+import '../models/inventory_action.dart';
 
 class InventoryScreen extends StatefulWidget {
-  const InventoryScreen({required this.api, super.key});
+  const InventoryScreen({
+    required this.api,
+    this.currentUserId,
+    this.initialDashboard = false,
+    super.key,
+  });
   final InventoryApi api;
+  final int? currentUserId;
+  final bool initialDashboard;
   @override
   State<InventoryScreen> createState() => _InventoryScreenState();
 }
@@ -17,6 +32,18 @@ class _InventoryScreenState extends State<InventoryScreen> {
   final _search = TextEditingController();
   List<Product> _products = [];
   Product? _selected;
+  InventoryAction? _action;
+  bool _movementsVisible = false;
+  bool _salesVisible = false;
+  bool _salesHistory = false;
+  bool _alertsVisible = false;
+  int? _alertProductId;
+  int _alertsVisit = 0;
+  int? _notifiedLowCount;
+  late bool _dashboardVisible;
+  int? _analysisProductId;
+  Product? _operationProduct;
+  bool _operationBusy = false;
   bool _loading = true;
   bool _lowOnly = false;
   String? _category;
@@ -26,6 +53,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
   @override
   void initState() {
     super.initState();
+    _dashboardVisible = widget.initialDashboard;
     _reload();
   }
 
@@ -47,6 +75,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
       if (!mounted || generation != _generation) return;
       setState(() {
         _products = data;
+        _notifiedLowCount = null;
         _updated = DateTime.now();
         _selected = null;
         if (_category != null && !data.any((p) => p.category == _category)) {
@@ -101,6 +130,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
   Future<void> _afterEdit(
     ProductCreationResult result, {
     bool closeDetail = false,
+    InventoryAction? repeatAction,
   }) async {
     if (closeDetail) Navigator.of(context).pop();
     setState(() {
@@ -118,10 +148,22 @@ class _InventoryScreenState extends State<InventoryScreen> {
     }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
+        action: repeatAction == null
+            ? null
+            : SnackBarAction(
+                label: 'Otra operación',
+                onPressed: () => _startAction(repeatAction),
+              ),
         content: Text(
           result.id != null
               ? (result.deactivated
                     ? 'Producto dado de baja. Se conservó su historial.'
+                    : result.adjustmentQuantity != null
+                    ? 'Ajuste registrado. Stock actualizado.'
+                    : result.entryQuantity != null
+                    ? 'Entrada registrada: ${result.entryQuantity} unidades. Stock actualizado.'
+                    : result.minimumChanged
+                    ? 'Stock mínimo actualizado. Se reevaluó el estado del stock.'
                     : 'Producto actualizado con código ${result.id}.')
               : 'Revisá los datos actuales del producto en el inventario.',
         ),
@@ -148,6 +190,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
               api: widget.api,
               onClose: () => Navigator.pop(context),
               onChanged: (result) => _afterEdit(result, closeDetail: true),
+              onAction: (action, product) {
+                Navigator.pop(context);
+                _startAction(action, product);
+              },
             ),
           ),
         ),
@@ -155,186 +201,493 @@ class _InventoryScreenState extends State<InventoryScreen> {
     );
   }
 
+  void _startAction(InventoryAction? action, [Product? product]) {
+    if (_operationBusy) return;
+    setState(() {
+      _dashboardVisible = false;
+      _alertsVisible = false;
+      _salesVisible = false;
+      _movementsVisible = false;
+      _action = action;
+      _operationProduct = product;
+    });
+  }
+
+  Future<void> _finishOperation(ProductCreationResult? result) async {
+    final previous = _action;
+    setState(() {
+      _operationBusy = false;
+      _action = null;
+      _operationProduct = null;
+    });
+    if (result != null) {
+      await _afterEdit(result, repeatAction: previous);
+      if (!mounted) return;
+      // The existing result message stays visible; another operation is available in the menu.
+    }
+  }
+
+  void _openMovements() {
+    if (_operationBusy) return;
+    setState(() {
+      _dashboardVisible = false;
+      _alertsVisible = false;
+      _salesVisible = false;
+      _movementsVisible = true;
+      _action = null;
+      _operationProduct = null;
+    });
+  }
+
+  void _openNewSale() {
+    if (_operationBusy) return;
+    setState(() {
+      _dashboardVisible = false;
+      _alertsVisible = false;
+      _salesVisible = true;
+      _salesHistory = false;
+      _movementsVisible = false;
+      _action = null;
+      _operationProduct = null;
+    });
+  }
+
+  void _openSalesHistory() {
+    if (_operationBusy) return;
+    _openNewSale();
+    setState(() => _salesHistory = true);
+  }
+
+  void _openAlerts([int? productId]) {
+    if (_operationBusy) return;
+    setState(() {
+      _alertProductId = productId;
+      ++_alertsVisit;
+      _dashboardVisible = false;
+      _alertsVisible = true;
+      _salesVisible = false;
+      _movementsVisible = false;
+      _action = null;
+      _operationProduct = null;
+    });
+  }
+
+  void _openDashboard() {
+    if (_operationBusy) return;
+    setState(() {
+      _analysisProductId = null;
+      _dashboardVisible = true;
+      _alertsVisible = false;
+      _salesVisible = false;
+      _movementsVisible = false;
+      _action = null;
+      _operationProduct = null;
+    });
+  }
+
+  void _openDashboardProduct(int id) {
+    if (_operationBusy) return;
+    setState(() => _analysisProductId = id);
+  }
+
+  List<Product> get _lowProducts => _loading || _error != null
+      ? []
+      : _products.where((p) => p.isLow).toList();
+
+  Widget _alertButton() => StockNotifications(
+    api: widget.api,
+    count: _notifiedLowCount ?? _lowProducts.length,
+    enabled: !_operationBusy,
+    onAlert: (id) => _openAlerts(id),
+    onAllAlerts: () => _openAlerts(),
+    onCountChanged: (count) => setState(() => _notifiedLowCount = count),
+  );
+
+  Widget _stockNotice() => Container(
+    key: const Key('stock-low-notice'),
+    width: double.infinity,
+    margin: const EdgeInsets.only(top: 18),
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+    decoration: BoxDecoration(
+      color: const Color(0xFFFFF3D6),
+      borderRadius: BorderRadius.circular(9),
+    ),
+    child: Row(
+      children: [
+        const Icon(
+          Icons.warning_amber_rounded,
+          size: 20,
+          color: Color(0xFF8A651D),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            'Stock bajo: ${_lowProducts.take(2).map((p) => '${p.name} (#${p.id})').join(', ')}${_lowProducts.length > 2 ? ' y ${_lowProducts.length - 2} más' : ''}.',
+            style: const TextStyle(color: Color(0xFF795B20)),
+          ),
+        ),
+        const SizedBox(width: 8),
+        TextButton(onPressed: _openAlerts, child: const Text('Ver alertas')),
+      ],
+    ),
+  );
+
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, viewport) {
       final desktop = viewport.maxWidth >= 1000;
       final mobile = viewport.maxWidth < 900;
       final wide = viewport.maxWidth >= 1280;
-      return Scaffold(
-        body: SafeArea(
-          child: Row(
-            children: [
-              if (desktop) _sidebar(),
-              Expanded(
-                child: Column(
-                  children: [
-                    _header(desktop, mobile),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        padding: EdgeInsets.all(mobile ? 20 : 32),
-                        child: Align(
-                          alignment: Alignment.topCenter,
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 1700),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _title(mobile),
-                                const SizedBox(height: 28),
-                                _filters(mobile),
-                                const SizedBox(height: 16),
-                                _summary(),
-                                const SizedBox(height: 20),
-                                if (_loading)
-                                  _message(
-                                    Icons.inventory_2_outlined,
-                                    'Cargando inventario',
-                                    'Estamos consultando los productos y sus existencias.',
-                                    loading: true,
-                                  )
-                                else if (_error != null)
-                                  _message(
-                                    Icons.cloud_off_outlined,
-                                    'No pudimos cargar el inventario',
-                                    _error!,
-                                    retry: true,
-                                  )
-                                else if (_products.isEmpty)
-                                  _message(
-                                    Icons.inventory_2_outlined,
-                                    'Todavía no hay productos activos',
-                                    'Los productos con stock registrado aparecerán acá.',
-                                  )
-                                else if (_filtered.isEmpty)
-                                  _message(
-                                    Icons.search_off_outlined,
-                                    'No encontramos productos',
-                                    'Probá con otra búsqueda o cambiá los filtros.',
-                                    reset: true,
-                                  )
-                                else
-                                  Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Expanded(
-                                        child: mobile
-                                            ? _mobileList()
-                                            : _table(wide),
-                                      ),
-                                      if (wide && _selected != null) ...[
-                                        const SizedBox(width: 20),
-                                        SizedBox(
-                                          width: 310,
-                                          child: ProductDetails(
-                                            onChanged: _afterEdit,
-                                            product: _selected!,
-                                            api: widget.api,
-                                            onClose: () => setState(
-                                              () => _selected = null,
+      return PopScope(
+        canPop:
+            !_dashboardVisible &&
+            !_alertsVisible &&
+            !_movementsVisible &&
+            !_salesVisible,
+        onPopInvokedWithResult: (didPop, result) {
+          if (!didPop &&
+              (_dashboardVisible ||
+                  _alertsVisible ||
+                  _movementsVisible ||
+                  _salesVisible) &&
+              !_operationBusy) {
+            if (_dashboardVisible && _analysisProductId != null) {
+              setState(() => _analysisProductId = null);
+            } else {
+              _startAction(null);
+            }
+          }
+        },
+        child: Scaffold(
+          drawer: desktop
+              ? null
+              : Drawer(
+                  child: SafeArea(
+                    child: ListView(children: [_navigation(drawer: true)]),
+                  ),
+                ),
+          body: SafeArea(
+            child: Row(
+              children: [
+                if (desktop) _sidebar(),
+                Expanded(
+                  child: Column(
+                    children: [
+                      _header(desktop, mobile),
+                      Expanded(
+                        child: _dashboardVisible
+                            ? DashboardScreen(
+                                api: widget.api,
+                                onInventory: () => _startAction(null),
+                                onAlerts: _openAlerts,
+                                onSales: _openSalesHistory,
+                                onProduct: _openDashboardProduct,
+                                analysisProductId: _analysisProductId,
+                                onAnalysisClosed: () =>
+                                    setState(() => _analysisProductId = null),
+                                onRefreshed: _reload,
+                              )
+                            : _alertsVisible
+                            ? AlertsScreen(
+                                key: ValueKey('alerts-$_alertsVisit'),
+                                initialProductId: _alertProductId,
+                                api: widget.api,
+                                onEntry: (product) => _startAction(
+                                  InventoryAction.entry,
+                                  product,
+                                ),
+                                onRefreshed: _reload,
+                              )
+                            : _salesVisible && _salesHistory
+                            ? SalesScreen(api: widget.api)
+                            : _salesVisible
+                            ? NewSaleScreen(
+                                api: widget.api,
+                                currentUserId: widget.currentUserId,
+                                onBusyChanged: (busy) =>
+                                    setState(() => _operationBusy = busy),
+                                onSaved: _reload,
+                                onInventory: () => _startAction(null),
+                                onMovements: _openMovements,
+                              )
+                            : _movementsVisible
+                            ? MovementsScreen(api: widget.api, embedded: true)
+                            : _action != null
+                            ? InventoryOperationPage(
+                                key: ValueKey(_action),
+                                action: _action!,
+                                api: widget.api,
+                                products: _products,
+                                initialProduct: _operationProduct,
+                                onFinished: _finishOperation,
+                                onBusyChanged: (busy) =>
+                                    setState(() => _operationBusy = busy),
+                              )
+                            : SingleChildScrollView(
+                                padding: EdgeInsets.all(mobile ? 20 : 32),
+                                child: Align(
+                                  alignment: Alignment.topCenter,
+                                  child: ConstrainedBox(
+                                    constraints: const BoxConstraints(
+                                      maxWidth: 1700,
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        _title(mobile),
+                                        if (_lowProducts.isNotEmpty)
+                                          _stockNotice(),
+                                        const SizedBox(height: 28),
+                                        _filters(mobile),
+                                        const SizedBox(height: 16),
+                                        _summary(),
+                                        const SizedBox(height: 20),
+                                        if (_loading)
+                                          _message(
+                                            Icons.inventory_2_outlined,
+                                            'Cargando inventario',
+                                            'Estamos consultando los productos y sus existencias.',
+                                            loading: true,
+                                          )
+                                        else if (_error != null)
+                                          _message(
+                                            Icons.cloud_off_outlined,
+                                            'No pudimos cargar el inventario',
+                                            _error!,
+                                            retry: true,
+                                          )
+                                        else if (_products.isEmpty)
+                                          _message(
+                                            Icons.inventory_2_outlined,
+                                            'Todavía no hay productos activos',
+                                            'Los productos con stock registrado aparecerán acá.',
+                                          )
+                                        else if (_filtered.isEmpty)
+                                          _message(
+                                            Icons.search_off_outlined,
+                                            'No encontramos productos',
+                                            'Probá con otra búsqueda o cambiá los filtros.',
+                                            reset: true,
+                                          )
+                                        else
+                                          Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Expanded(
+                                                child: mobile
+                                                    ? _mobileList()
+                                                    : _table(wide),
+                                              ),
+                                              if (wide &&
+                                                  _selected != null) ...[
+                                                const SizedBox(width: 20),
+                                                SizedBox(
+                                                  width: 310,
+                                                  child: ProductDetails(
+                                                    onChanged: _afterEdit,
+                                                    onAction: _startAction,
+                                                    product: _selected!,
+                                                    api: widget.api,
+                                                    onClose: () => setState(
+                                                      () => _selected = null,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ],
+                                          ),
+                                        const SizedBox(height: 20),
+                                        if (!_loading &&
+                                            _error == null &&
+                                            _products.isNotEmpty)
+                                          Text(
+                                            mobile
+                                                ? 'Tocá un producto para ver su detalle.'
+                                                : 'Seleccioná un producto para consultar su detalle.',
+                                            style: const TextStyle(
+                                              color: muted,
+                                              fontSize: 12,
                                             ),
+                                          ),
+                                        const SizedBox(height: 28),
+                                        const Text(
+                                          'StockIA · Gestión inteligente de inventario',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: muted,
                                           ),
                                         ),
                                       ],
-                                    ],
-                                  ),
-                                const SizedBox(height: 20),
-                                if (!_loading &&
-                                    _error == null &&
-                                    _products.isNotEmpty)
-                                  Text(
-                                    mobile
-                                        ? 'Tocá un producto para ver su detalle.'
-                                        : 'Seleccioná un producto para consultar su detalle.',
-                                    style: const TextStyle(
-                                      color: muted,
-                                      fontSize: 12,
                                     ),
                                   ),
-                                const SizedBox(height: 28),
-                                const Text(
-                                  'StockIA · Gestión inteligente de inventario',
-                                  style: TextStyle(fontSize: 11, color: muted),
                                 ),
-                              ],
-                            ),
-                          ),
-                        ),
+                              ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    },
-  );
-  Widget _sidebar() => Container(
-    width: 224,
-    decoration: const BoxDecoration(
-      color: Colors.white,
-      border: Border(right: BorderSide(color: line)),
-    ),
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 28),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _brand(),
-          const SizedBox(height: 44),
-          const Padding(
-            padding: EdgeInsets.only(left: 12, bottom: 16),
-            child: Text(
-              'GESTIÓN',
-              style: TextStyle(
-                color: muted,
-                fontSize: 10,
-                letterSpacing: 1.6,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-            decoration: BoxDecoration(
-              color: const Color(0xFFEBF1F9),
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.inventory_2_outlined, size: 21, color: navy),
-                SizedBox(width: 14),
-                Expanded(
-                  child: Text(
-                    'Inventario',
-                    style: TextStyle(color: navy, fontWeight: FontWeight.w600),
+                    ],
                   ),
                 ),
               ],
             ),
           ),
-          const Spacer(),
-          const Divider(),
-          const SizedBox(height: 16),
-          const Padding(
-            padding: EdgeInsets.only(left: 10),
-            child: Text(
-              'Consulta de inventario',
-              style: TextStyle(color: muted, fontSize: 12),
-            ),
+        ),
+      );
+    },
+  );
+  Widget _sidebar() => SizedBox(
+    width: 248,
+    child: Material(
+      color: Colors.white,
+      child: ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 28),
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: _brand(),
           ),
+          const SizedBox(height: 32),
+          _navigation(),
         ],
       ),
     ),
   );
-  Widget _brand() => Row(
+
+  Widget _navigation({bool drawer = false}) {
+    void select(InventoryAction? action) {
+      if (_operationBusy) return;
+      if (drawer) Navigator.pop(context);
+      _startAction(action);
+    }
+
+    return Material(
+      color: Colors.white,
+      child: Column(
+        children: [
+          ListTile(
+            key: const Key('nav-dashboard'),
+            leading: const Icon(Icons.dashboard_outlined, color: navy),
+            title: const Text('Inicio'),
+            selected: _dashboardVisible,
+            selectedTileColor: const Color(0xFFEBF1F9),
+            enabled: !_operationBusy,
+            onTap: () {
+              if (drawer) Navigator.pop(context);
+              _openDashboard();
+            },
+          ),
+          ExpansionTile(
+            key: const PageStorageKey('inventory-navigation'),
+            initiallyExpanded: true,
+            leading: const Icon(Icons.inventory_2_outlined, color: navy),
+            title: const Text('Inventario'),
+            children: [
+              ListTile(
+                key: const Key('nav-inventory'),
+                contentPadding: const EdgeInsets.only(left: 36, right: 12),
+                selected:
+                    !_dashboardVisible &&
+                    !_alertsVisible &&
+                    !_salesVisible &&
+                    !_movementsVisible &&
+                    _action == null,
+                selectedTileColor: const Color(0xFFEBF1F9),
+                enabled: !_operationBusy,
+                title: const Text(
+                  'Ver inventario',
+                  style: TextStyle(fontSize: 13),
+                ),
+                onTap: () => select(null),
+              ),
+              ...InventoryAction.values.map(
+                (action) => ListTile(
+                  key: ValueKey('nav-${action.name}'),
+                  contentPadding: const EdgeInsets.only(left: 36, right: 12),
+                  selected:
+                      !_dashboardVisible &&
+                      !_alertsVisible &&
+                      !_salesVisible &&
+                      !_movementsVisible &&
+                      _action == action,
+                  selectedTileColor: const Color(0xFFEBF1F9),
+                  enabled: !_operationBusy,
+                  title: Text(action.label, style: TextStyle(fontSize: 13)),
+                  onTap: () => select(action),
+                ),
+              ),
+            ],
+          ),
+          ListTile(
+            leading: const Icon(Icons.history, color: navy),
+            title: const Text('Movimientos'),
+            selected: _movementsVisible,
+            selectedTileColor: const Color(0xFFEBF1F9),
+            enabled: !_operationBusy,
+            onTap: () {
+              if (drawer) Navigator.pop(context);
+              _openMovements();
+            },
+          ),
+          ListTile(
+            key: const Key('nav-alerts'),
+            leading: const Icon(Icons.notifications_outlined, color: navy),
+            title: const Text('Alertas'),
+            selected: _alertsVisible,
+            selectedTileColor: const Color(0xFFEBF1F9),
+            enabled: !_operationBusy,
+            onTap: () {
+              if (drawer) Navigator.pop(context);
+              _openAlerts();
+            },
+          ),
+          ExpansionTile(
+            key: const PageStorageKey('sales-navigation'),
+            initiallyExpanded: true,
+            leading: const Icon(Icons.point_of_sale_outlined, color: navy),
+            title: const Text('Ventas'),
+            children: [
+              ListTile(
+                key: const Key('nav-sales-history'),
+                selected: _salesVisible && _salesHistory,
+                selectedTileColor: const Color(0xFFEBF1F9),
+                enabled: !_operationBusy,
+                contentPadding: const EdgeInsets.only(left: 36, right: 12),
+                title: const Text(
+                  'Consultar ventas',
+                  style: TextStyle(fontSize: 13),
+                ),
+                onTap: () {
+                  if (drawer) Navigator.pop(context);
+                  _openSalesHistory();
+                },
+              ),
+              ListTile(
+                key: const Key('nav-new-sale'),
+                selected: _salesVisible && !_salesHistory,
+                selectedTileColor: const Color(0xFFEBF1F9),
+                enabled: !_operationBusy,
+                contentPadding: const EdgeInsets.only(left: 36, right: 12),
+                title: const Text(
+                  'Registrar venta',
+                  style: TextStyle(fontSize: 13),
+                ),
+                onTap: () {
+                  if (drawer) Navigator.pop(context);
+                  _openNewSale();
+                },
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _brand({bool compact = false}) => Row(
     children: [
       Container(
-        width: 44,
-        height: 44,
+        width: compact ? 36 : 44,
+        height: compact ? 36 : 44,
         decoration: BoxDecoration(
           color: ink,
           borderRadius: BorderRadius.circular(12),
@@ -345,24 +698,25 @@ class _InventoryScreenState extends State<InventoryScreen> {
           size: 24,
         ),
       ),
-      const SizedBox(width: 12),
-      const Expanded(
+      SizedBox(width: compact ? 8 : 12),
+      Expanded(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               'StockIA',
               style: TextStyle(
-                fontSize: 21,
+                fontSize: compact ? 19 : 21,
                 fontWeight: FontWeight.w700,
                 color: ink,
               ),
             ),
-            SizedBox(height: 3),
-            Text(
-              'Gestión inteligente',
-              style: TextStyle(fontSize: 10, color: muted),
-            ),
+            if (!compact) const SizedBox(height: 3),
+            if (!compact)
+              const Text(
+                'Gestión inteligente',
+                style: TextStyle(fontSize: 10, color: muted),
+              ),
           ],
         ),
       ),
@@ -378,7 +732,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
     child: Row(
       children: [
         if (!desktop)
-          Expanded(child: _brand())
+          Expanded(child: _brand(compact: mobile))
         else
           const Text(
             'StockIA  /  Gestión',
@@ -386,23 +740,30 @@ class _InventoryScreenState extends State<InventoryScreen> {
           ),
         if (desktop) const Spacer(),
         if (!mobile)
-          const Text(
-            'Inventario',
-            style: TextStyle(color: muted, fontSize: 13),
+          Text(
+            _dashboardVisible
+                ? (_analysisProductId == null
+                      ? 'Inicio'
+                      : 'Análisis del producto')
+                : _alertsVisible
+                ? 'Alertas'
+                : _salesVisible
+                ? 'Ventas'
+                : (_movementsVisible ? 'Movimientos' : 'Inventario'),
+            style: const TextStyle(color: muted, fontSize: 13),
           ),
         const SizedBox(width: 16),
-        Tooltip(
-          message: 'Consulta de productos y existencias',
-          child: Container(
-            width: 38,
-            height: 38,
-            decoration: const BoxDecoration(
-              color: Color(0xFFEDF2F8),
-              shape: BoxShape.circle,
+        if (!desktop)
+          Builder(
+            builder: (menuContext) => IconButton(
+              tooltip: 'Menú de inventario',
+              onPressed: _operationBusy
+                  ? null
+                  : () => Scaffold.of(menuContext).openDrawer(),
+              icon: const Icon(Icons.menu, color: navy),
             ),
-            child: const Icon(Icons.inventory_outlined, color: navy, size: 19),
           ),
-        ),
+        _alertButton(),
       ],
     ),
   );
@@ -581,7 +942,13 @@ class _InventoryScreenState extends State<InventoryScreen> {
                   ),
                 ),
               ),
-              const SizedBox(width: 22),
+              const SizedBox(
+                width: 112,
+                child: Text(
+                  'Acciones',
+                  style: TextStyle(fontSize: 11, color: muted),
+                ),
+              ),
             ],
           ),
         ),
@@ -615,7 +982,23 @@ class _InventoryScreenState extends State<InventoryScreen> {
                         child: StockBadge(p.isLow),
                       ),
                     ),
-                    const Icon(Icons.chevron_right, size: 22, color: muted),
+                    SizedBox(
+                      width: 112,
+                      child: OutlinedButton(
+                        onPressed: () => _open(p, wide),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 12,
+                          ),
+                        ),
+                        child: const Text(
+                          'Ver detalle',
+                          maxLines: 1,
+                          softWrap: false,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -707,6 +1090,24 @@ class _InventoryScreenState extends State<InventoryScreen> {
                             size: 22,
                           ),
                         ],
+                      ),
+                      const SizedBox(height: 12),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: OutlinedButton(
+                          onPressed: () => _open(p, false),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 12,
+                            ),
+                          ),
+                          child: const Text(
+                            'Ver detalle',
+                            maxLines: 1,
+                            softWrap: false,
+                          ),
+                        ),
                       ),
                     ],
                   ),

@@ -3,8 +3,12 @@ import 'package:flutter/material.dart';
 import '../app.dart';
 import '../data/inventory_api.dart';
 import '../models/product.dart';
+import '../models/inventory_action.dart';
 import '../screens/new_product_form.dart';
 import 'deactivate_product_dialog.dart';
+import 'minimum_stock_dialog.dart';
+import 'stock_entry_dialog.dart';
+import 'stock_adjustment_dialog.dart';
 
 class StockBadge extends StatelessWidget {
   const StockBadge(this.low, {super.key});
@@ -33,8 +37,10 @@ class ProductDetails extends StatefulWidget {
     required this.api,
     required this.onClose,
     this.onChanged,
+    this.onAction,
     super.key,
   });
+  final void Function(InventoryAction, Product)? onAction;
   final Product product;
   final InventoryApi api;
   final VoidCallback onClose;
@@ -49,6 +55,10 @@ class _ProductDetailsState extends State<ProductDetails> {
 
   Future<void> _edit(Product product) async {
     if (_editing) return;
+    if (widget.onAction != null) {
+      widget.onAction!(InventoryAction.edit, product);
+      return;
+    }
     setState(() => _editing = true);
     final result = await openEditProduct(context, widget.api, product);
     if (!mounted) return;
@@ -62,8 +72,69 @@ class _ProductDetailsState extends State<ProductDetails> {
     }
   }
 
+  Future<void> _registerEntry(Product product) async {
+    if (_editing) return;
+    if (widget.onAction != null) {
+      widget.onAction!(InventoryAction.entry, product);
+      return;
+    }
+    setState(() => _editing = true);
+    final result = await registerStockEntry(context, widget.api, product);
+    if (!mounted) return;
+    setState(() => _editing = false);
+    if (result != null) {
+      if (widget.onChanged != null) {
+        await widget.onChanged!(result);
+      } else {
+        setState(() => _details = widget.api.loadDetail(widget.product));
+      }
+    }
+  }
+
+  Future<void> _registerAdjustment(Product product) async {
+    if (_editing) return;
+    if (widget.onAction != null) {
+      widget.onAction!(InventoryAction.adjustment, product);
+      return;
+    }
+    setState(() => _editing = true);
+    final result = await registerStockAdjustment(context, widget.api, product);
+    if (!mounted) return;
+    setState(() => _editing = false);
+    if (result != null) {
+      if (widget.onChanged != null) {
+        await widget.onChanged!(result);
+      } else {
+        setState(() => _details = widget.api.loadDetail(widget.product));
+      }
+    }
+  }
+
+  Future<void> _configureMinimum(Product product) async {
+    if (_editing) return;
+    if (widget.onAction != null) {
+      widget.onAction!(InventoryAction.minimum, product);
+      return;
+    }
+    setState(() => _editing = true);
+    final result = await configureMinimumStock(context, widget.api, product);
+    if (!mounted) return;
+    setState(() => _editing = false);
+    if (result != null) {
+      if (widget.onChanged != null) {
+        await widget.onChanged!(result);
+      } else {
+        setState(() => _details = widget.api.loadDetail(widget.product));
+      }
+    }
+  }
+
   Future<void> _deactivate(Product product) async {
     if (_editing) return;
+    if (widget.onAction != null) {
+      widget.onAction!(InventoryAction.deactivate, product);
+      return;
+    }
     setState(() => _editing = true);
     final result = await confirmProductDeactivation(
       context,
@@ -202,6 +273,26 @@ class _ProductDetailsState extends State<ProductDetails> {
                     const SizedBox(height: 24),
                     SizedBox(
                       width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: _editing ? null : () => _registerEntry(p),
+                        icon: const Icon(Icons.add_box_outlined, size: 18),
+                        label: const Text('Registrar entrada'),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _editing
+                            ? null
+                            : () => _registerAdjustment(p),
+                        icon: const Icon(Icons.swap_vert, size: 18),
+                        label: const Text('Registrar ajuste'),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
                       child: OutlinedButton.icon(
                         onPressed: _editing ? null : () => _edit(p),
                         icon: const Icon(Icons.edit_outlined, size: 18),
@@ -211,9 +302,19 @@ class _ProductDetailsState extends State<ProductDetails> {
                     const SizedBox(height: 10),
                     SizedBox(
                       width: double.infinity,
-                      child: TextButton.icon(
+                      child: OutlinedButton.icon(
+                        onPressed: _editing ? null : () => _configureMinimum(p),
+                        icon: const Icon(Icons.tune, size: 18),
+                        label: const Text('Configurar stock mínimo'),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
                         onPressed: _editing ? null : () => _deactivate(p),
-                        style: TextButton.styleFrom(
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: Color(0xFFB23C3C)),
                           foregroundColor: const Color(0xFFB23C3C),
                         ),
                         icon: const Icon(Icons.archive_outlined, size: 18),

@@ -4,6 +4,7 @@ import '../app.dart';
 import '../data/inventory_api.dart';
 import '../models/product.dart';
 import '../screens/new_product_form.dart';
+import 'operation_frame.dart';
 
 Future<ProductCreationResult?> confirmProductDeactivation(
   BuildContext context,
@@ -19,8 +20,14 @@ class DeactivateProductDialog extends StatefulWidget {
   const DeactivateProductDialog({
     required this.api,
     required this.product,
+    this.embedded = false,
+    this.onCompleted,
+    this.onBusyChanged,
     super.key,
   });
+  final bool embedded;
+  final ValueChanged<ProductCreationResult?>? onCompleted;
+  final ValueChanged<bool>? onBusyChanged;
   final InventoryApi api;
   final Product product;
   @override
@@ -35,6 +42,7 @@ class _DeactivateProductDialogState extends State<DeactivateProductDialog> {
 
   Future<void> _confirm() async {
     if (_saving || _refreshRequired) return;
+    widget.onBusyChanged?.call(true);
     setState(() {
       _saving = true;
       _error = null;
@@ -43,7 +51,7 @@ class _DeactivateProductDialogState extends State<DeactivateProductDialog> {
       final id = await widget.api.deactivateProduct(widget.product);
       if (!mounted) return;
       setState(() => _saving = false);
-      Navigator.pop(context, ProductCreationResult(id: id, deactivated: true));
+      _finish(ProductCreationResult(id: id, deactivated: true));
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -55,13 +63,24 @@ class _DeactivateProductDialogState extends State<DeactivateProductDialog> {
             error is ApiFailure &&
             (error.mayHaveSaved || error.requiresRefresh);
       });
+      widget.onBusyChanged?.call(_refreshRequired);
+    }
+  }
+
+  void _finish(ProductCreationResult? result) {
+    widget.onBusyChanged?.call(false);
+    if (widget.onCompleted != null) {
+      widget.onCompleted!(result);
+    } else {
+      Navigator.pop(context, result);
     }
   }
 
   @override
   Widget build(BuildContext context) => PopScope(
     canPop: !_saving && !_refreshRequired,
-    child: AlertDialog(
+    child: OperationFrame(
+      embedded: widget.embedded,
       backgroundColor: Colors.white,
       constraints: const BoxConstraints(maxWidth: 500),
       title: const Text(
@@ -73,33 +92,30 @@ class _DeactivateProductDialogState extends State<DeactivateProductDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              widget.product.name,
-              style: const TextStyle(
-                color: ink,
-                fontSize: 17,
-                fontWeight: FontWeight.w600,
+            if (!widget.embedded) ...[
+              Text(
+                widget.product.name,
+                style: const TextStyle(
+                  color: ink,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Código: ${widget.product.id}',
-              style: const TextStyle(color: muted),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Stock actual: ${widget.product.quantity} unidades',
-              style: const TextStyle(color: muted),
-            ),
-            const SizedBox(height: 22),
+              const SizedBox(height: 8),
+              Text(
+                'Código: ${widget.product.id}',
+                style: const TextStyle(color: muted),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Stock actual: ${widget.product.quantity} unidades',
+                style: const TextStyle(color: muted),
+              ),
+            ],
+            const SizedBox(height: 16),
             const Text(
-              'El producto quedará inactivo y dejará de aparecer en el inventario activo.',
-              style: TextStyle(height: 1.6),
-            ),
-            const SizedBox(height: 14),
-            const Text(
-              'Se conservarán sus datos, ventas y movimientos. No se eliminará de la base de datos.',
-              style: TextStyle(color: muted, height: 1.6),
+              'Quedará inactivo. Se conservarán sus datos e historial.',
+              style: TextStyle(color: muted, height: 1.5),
             ),
             if (_error != null) ...[
               const SizedBox(height: 20),
@@ -118,15 +134,13 @@ class _DeactivateProductDialogState extends State<DeactivateProductDialog> {
       actions: [
         if (_refreshRequired)
           FilledButton(
-            onPressed: () => Navigator.pop(
-              context,
-              const ProductCreationResult(uncertain: true),
-            ),
+            onPressed: () =>
+                _finish(const ProductCreationResult(uncertain: true)),
             child: const Text('Actualizar inventario'),
           )
         else ...[
           TextButton(
-            onPressed: _saving ? null : () => Navigator.pop(context),
+            onPressed: _saving ? null : () => _finish(null),
             child: const Text('Cancelar'),
           ),
           FilledButton.icon(

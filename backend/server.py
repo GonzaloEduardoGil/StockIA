@@ -2,6 +2,9 @@
 import os
 from fastapi.middleware.cors import CORSMiddleware
 from main import app
+from prediction_queries import router as prediction_router
+
+app.include_router(prediction_router)
 
 origins = [value.strip() for value in os.getenv(
     "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173",

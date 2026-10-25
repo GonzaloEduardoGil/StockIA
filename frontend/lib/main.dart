@@ -8,5 +8,5 @@ void main() {
   WidgetsFlutterBinding.ensureInitialized();
   // Mantener disponibles los controles accesibles en la versión web.
   if (kIsWeb) SemanticsBinding.instance.ensureSemantics();
-  runApp(const StockiaApp());
+  runApp(const StockiaApp(initialDashboard: true));
 }
