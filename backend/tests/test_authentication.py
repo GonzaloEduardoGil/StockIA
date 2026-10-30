@@ -2,7 +2,6 @@ import hashlib
 import importlib.util
 from datetime import datetime, timezone
 from pathlib import Path
-import sys
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
@@ -10,21 +9,25 @@ from unittest.mock import MagicMock, patch
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.testclient import TestClient
 from fastapi.middleware.cors import CORSMiddleware
+from acceso import autenticacion as security
 
 
 class AuthenticationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.source = SimpleNamespace(obtener_conexion=MagicMock())
-        spec = importlib.util.spec_from_file_location('authentication_under_test', Path(__file__).resolve().parents[1] / 'modules' / 'authentication.py')
+        spec = importlib.util.spec_from_file_location('authentication_under_test', Path(__file__).resolve().parents[1] / 'acceso' / 'autenticacion.py')
         cls.auth = importlib.util.module_from_spec(spec)
-        with patch.dict(sys.modules, {'main': cls.source}):
-            spec.loader.exec_module(cls.auth)
+        spec.loader.exec_module(cls.auth)
+        cls.auth.database = cls.source
         cls.password = 'test-only-password-never-used-in-real-db'
         cls.password_hash = cls.auth.hasher.hash(cls.password)
         cls.token = 'T' * 43
 
     def setUp(self):
+        security_database = patch.object(security, 'database', self.source)
+        security_database.start()
+        self.addCleanup(security_database.stop)
         self.connection = MagicMock()
         self.cursor = self.connection.cursor.return_value.__enter__.return_value
         self.source.obtener_conexion.return_value = self.connection
@@ -32,7 +35,7 @@ class AuthenticationTest(unittest.TestCase):
         self.user = {'idUsuario': 73, 'nombre': 'Cuenta de prueba', 'email': 'test@example.test', 'rol': 'Vendedor'}
         self.app = FastAPI()
         self.app.include_router(self.auth.router)
-        self.app.add_middleware(self.auth.AuthenticationMiddleware)
+        self.app.add_middleware(security.AuthenticationMiddleware)
         self.app.add_middleware(CORSMiddleware, allow_origins=['http://localhost:5173'], allow_methods=['GET', 'POST', 'PATCH'], allow_headers=['Content-Type', 'Authorization'])
 
         @self.app.get('/stock/')
@@ -51,13 +54,13 @@ class AuthenticationTest(unittest.TestCase):
 
     def authorize(self, role='Vendedor'):
         self.user['rol'] = role
-        return patch.object(self.auth, 'resolve_session', return_value=self.user)
+        return patch.object(security, 'resolve_session', return_value=self.user)
 
     def headers(self):
         return {'Authorization': f'Bearer {self.token}'}
 
     def prepare_login(self, stored=None):
-        self.cursor.fetchall.return_value = [(73, self.user['nombre'], self.user['email'], self.user['rol'], stored or self.password_hash)]
+        self.cursor.fetchall.return_value = [(73, self.user['nombre'], self.user['email'], self.user['rol'], stored or self.password_hash, True)]
         self.cursor.fetchone.return_value = (datetime(2026, 12, 31, tzinfo=timezone.utc),)
 
     def test_password_correct_wrong_and_legacy_upgrade(self):
@@ -91,11 +94,11 @@ class AuthenticationTest(unittest.TestCase):
         unknown = self.client.post('/auth/login', json={'email': 'unknown@example.test', 'password': 'wrong'})
         self.assertEqual(wrong.status_code, 401)
         self.assertEqual(unknown.json(), wrong.json())
-        self.assertFalse(any('INSERT' in c.args[0] or 'UPDATE' in c.args[0] for c in self.cursor.execute.call_args_list))
+        self.assertFalse(any(c.args[0].strip().startswith(('INSERT', 'UPDATE', 'DELETE')) for c in self.cursor.execute.call_args_list))
 
     def test_requests_without_or_with_expired_session_are_rejected(self):
         self.assertEqual(self.client.get('/stock/').status_code, 401)
-        with patch.object(self.auth, 'resolve_session', return_value=None):
+        with patch.object(security, 'resolve_session', return_value=None):
             self.assertEqual(self.client.get('/stock/', headers=self.headers()).status_code, 401)
 
     def test_roles_are_checked_on_server(self):
@@ -139,7 +142,7 @@ class AuthenticationTest(unittest.TestCase):
             limit.check('x@example.test', 'test-address')
         self.assertEqual(error.exception.status_code, 429)
         self.cursor.fetchone.return_value = None
-        self.assertIsNone(self.auth.resolve_session(self.token))
+        self.assertIsNone(security.resolve_session(self.token))
         self.connection.set_session.assert_called_once_with(readonly=True)
         self.connection.commit.assert_not_called()
 

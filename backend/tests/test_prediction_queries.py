@@ -1,9 +1,8 @@
 import importlib.util
 from pathlib import Path
-import sys
 from types import SimpleNamespace
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from fastapi import HTTPException
 
 
@@ -12,10 +11,10 @@ class PredictionQueriesTest(unittest.TestCase):
         self.connection = MagicMock()
         self.cursor = self.connection.cursor.return_value.__enter__.return_value
         self.source = SimpleNamespace(obtener_conexion=MagicMock(return_value=self.connection))
-        spec = importlib.util.spec_from_file_location('prediction_queries_under_test', Path(__file__).resolve().parents[1] / 'modules' / 'prediction_queries.py')
+        spec = importlib.util.spec_from_file_location('prediction_queries_under_test', Path(__file__).resolve().parents[1] / 'funciones' / 'predicciones.py')
         self.module = importlib.util.module_from_spec(spec)
-        with patch.dict(sys.modules, {'main': self.source}):
-            spec.loader.exec_module(self.module)
+        spec.loader.exec_module(self.module)
+        self.module.database = self.source
 
     def test_latest_saved_predictions_are_read_only(self):
         from datetime import date

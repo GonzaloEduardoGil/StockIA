@@ -9,6 +9,9 @@ class DemandPrediction {
     required this.period,
     required this.units,
     this.active = true,
+    this.origin,
+    this.from,
+    this.to,
   });
   final int id;
   final int productId;
@@ -17,6 +20,9 @@ class DemandPrediction {
   final String period;
   final double units;
   final bool active;
+  final String? origin;
+  final DateTime? from;
+  final DateTime? to;
   factory DemandPrediction.fromApi(
     Map<String, dynamic> data, {
     int? productId,
@@ -32,6 +38,15 @@ class DemandPrediction {
       productName: productName ?? data['nombreProducto'] as String,
       date: DateTime.parse(data['fechaPrediccion'] as String),
       period: data['periodoPrediccion'] as String,
+      origin:
+          data['origen'] as String? ??
+          ((data['periodoPrediccion'] as String).startsWith('Semanal:')
+              ? 'Semanal'
+              : (data['periodoPrediccion'] as String).startsWith('Manual:')
+              ? 'Manual'
+              : null),
+      from: DateTime.tryParse(data['fechaDesde'] as String? ?? ''),
+      to: DateTime.tryParse(data['fechaHasta'] as String? ?? ''),
       units: dashboardAmount(data['cantidadEstimada']),
       active: active ?? data['activo'] as bool? ?? true,
     );

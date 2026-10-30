@@ -1,9 +1,8 @@
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
-import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from fastapi import HTTPException
 
 
@@ -11,10 +10,10 @@ class RecommendationQueriesTest(unittest.TestCase):
     def setUp(self):
         self.connection = MagicMock()
         self.cursor = self.connection.cursor.return_value.__enter__.return_value
-        spec = importlib.util.spec_from_file_location('recommendation_queries_under_test', Path(__file__).resolve().parents[1] / 'modules' / 'recommendation_queries.py')
+        spec = importlib.util.spec_from_file_location('recommendation_queries_under_test', Path(__file__).resolve().parents[1] / 'funciones' / 'recomendaciones.py')
         self.module = importlib.util.module_from_spec(spec)
-        with patch.dict(sys.modules, {'main': SimpleNamespace(obtener_conexion=lambda: self.connection)}):
-            spec.loader.exec_module(self.module)
+        spec.loader.exec_module(self.module)
+        self.module.database = SimpleNamespace(obtener_conexion=lambda: self.connection)
 
     def test_history_includes_pending_and_decided_records_read_only(self):
         from datetime import date

@@ -152,7 +152,7 @@ async def alert_stream(events, token, resolve, *, check_seconds=15):
 
 @router.get('/eventos/alertas', tags=['Alertas'])
 async def subscribe_alerts(request: Request):
-    from modules.authentication import resolve_session
+    from acceso.autenticacion import resolve_session
     return StreamingResponse(
         alert_stream(request.app.state.alert_events, request.state.auth_token, resolve_session),
         media_type='text/event-stream',

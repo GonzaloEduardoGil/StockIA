@@ -353,7 +353,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _predictionsPanel() => _panel(
     title: 'Predicciones de demanda',
-    subtitle: 'Última predicción guardada por producto',
+    subtitle: 'Actualización automática semanal',
     child: _predictionsLoading
         ? const Center(child: CircularProgressIndicator())
         : _predictionsError != null

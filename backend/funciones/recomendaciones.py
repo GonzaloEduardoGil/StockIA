@@ -1,6 +1,6 @@
 """Historial de recomendaciones guardadas. Todas las consultas son de lectura."""
 from fastapi import APIRouter, HTTPException
-import main
+from sistema import database
 
 router = APIRouter()
 
@@ -9,7 +9,7 @@ router = APIRouter()
 def consultar_recomendaciones():
     connection = None
     try:
-        connection = main.obtener_conexion()
+        connection = database.obtener_conexion()
         connection.set_session(readonly=True)
         with connection.cursor() as cursor:
             cursor.execute('SET LOCAL statement_timeout = 10000')
@@ -34,5 +34,8 @@ def consultar_recomendaciones():
         if connection:
             try:
                 connection.rollback()
+            except Exception:
+                # El pool descarta conexiones rotas sin reemplazar la respuesta.
+                pass
             finally:
                 connection.close()

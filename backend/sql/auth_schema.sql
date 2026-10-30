@@ -1,3 +1,5 @@
+-- Estado de acceso; las cuentas existentes siguen activas.
+ALTER TABLE "USUARIO" ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE;
 -- Sesiones opacas: se guarda el hash del token, nunca el token entregado al cliente.
 -- No altera las cuentas, roles ni contraseñas existentes.
 CREATE TABLE IF NOT EXISTS "STOCKIA_SESION" (

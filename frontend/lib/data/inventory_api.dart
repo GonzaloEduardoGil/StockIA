@@ -14,6 +14,7 @@ import '../models/dashboard.dart';
 import '../models/product_analysis.dart';
 import '../models/recommendation.dart';
 import '../models/auth_session.dart';
+import '../models/managed_user.dart';
 import 'session_client.dart';
 import 'alert_updates.dart';
 
@@ -684,6 +685,170 @@ class InventoryApi {
     return DashboardData.fromApi(await _get(path.toString()));
   }
 
+  void _requireAdmin() {
+    if (session.value?.role != 'Administrador') {
+      throw const ApiFailure('Solo el administrador puede gestionar usuarios.');
+    }
+  }
+
+  Future<List<ManagedUser>> loadUsers() async {
+    _requireAdmin();
+    final data = await _get('/usuarios/');
+    try {
+      return (data['usuarios'] as List<dynamic>)
+          .map((row) => ManagedUser.fromApi(row as Map<String, dynamic>))
+          .toList();
+    } catch (_) {
+      throw const ApiFailure('No se pudo interpretar el listado de usuarios.');
+    }
+  }
+
+  Future<ManagedUser> createUser({
+    required String name,
+    required String email,
+    required String role,
+    required String password,
+    required String confirmation,
+  }) async {
+    _requireAdmin();
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('$baseUrl/usuarios/'),
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json; charset=utf-8',
+            },
+            body: jsonEncode({
+              'nombre': name.trim(),
+              'email': email.trim().toLowerCase(),
+              'rol': role,
+              'password': password,
+              'confirmacion': confirmation,
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
+      final data =
+          jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+      if (response.statusCode != 201) {
+        final detail = data['detail'];
+        throw ApiFailure(
+          detail is String ? detail : 'No se pudo crear el usuario.',
+          mayHaveSaved: response.statusCode >= 500,
+        );
+      }
+      return ManagedUser.fromApi(data['usuario'] as Map<String, dynamic>);
+    } on ApiFailure {
+      rethrow;
+    } catch (_) {
+      throw const ApiFailure(
+        'No pudimos confirmar el alta. Actualizá el listado antes de volver a intentarlo.',
+        mayHaveSaved: true,
+      );
+    }
+  }
+
+  Future<ManagedUser> editUser(
+    int id, {
+    required String name,
+    required String email,
+  }) async {
+    _requireAdmin();
+    try {
+      final response = await _client
+          .patch(
+            Uri.parse('$baseUrl/usuarios/$id/'),
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json; charset=utf-8',
+            },
+            body: jsonEncode({
+              'nombre': name.trim(),
+              'email': email.trim().toLowerCase(),
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
+      final data =
+          jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+      if (response.statusCode != 200) {
+        final detail = data['detail'];
+        throw ApiFailure(
+          detail is String ? detail : 'No se pudo editar el usuario.',
+          mayHaveSaved: response.statusCode >= 500,
+        );
+      }
+      final user = ManagedUser.fromApi(data['usuario'] as Map<String, dynamic>);
+      if (user.id != id) throw const FormatException();
+      return user;
+    } on ApiFailure {
+      rethrow;
+    } catch (_) {
+      throw const ApiFailure(
+        'No pudimos confirmar la edición. Actualizá el listado antes de volver a intentarlo.',
+        mayHaveSaved: true,
+      );
+    }
+  }
+
+  Future<ManagedUser> changeUserStatus(int id, bool active) =>
+      _changeUserAccess(id, 'estado', {'activo': active});
+
+  Future<ManagedUser> changeUserRole(int id, String role) =>
+      _changeUserAccess(id, 'rol', {'rol': role});
+
+  Future<ManagedUser> resetUserPassword(
+    int id,
+    String password,
+    String confirmation,
+  ) => _changeUserAccess(id, 'password', {
+    'password': password,
+    'confirmacion': confirmation,
+  }, post: true);
+
+  Future<ManagedUser> _changeUserAccess(
+    int id,
+    String action,
+    Map<String, dynamic> body, {
+    bool post = false,
+  }) async {
+    _requireAdmin();
+    try {
+      final url = Uri.parse('$baseUrl/usuarios/$id/$action');
+      const headers = {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json; charset=utf-8',
+      };
+      final response =
+          await (post
+                  ? _client.post(url, headers: headers, body: jsonEncode(body))
+                  : _client.patch(
+                      url,
+                      headers: headers,
+                      body: jsonEncode(body),
+                    ))
+              .timeout(const Duration(seconds: 30));
+      final data =
+          jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+      if (response.statusCode != 200) {
+        final detail = data['detail'];
+        throw ApiFailure(
+          detail is String ? detail : 'No se pudo completar la operación.',
+          mayHaveSaved: response.statusCode >= 500,
+        );
+      }
+      final user = ManagedUser.fromApi(data['usuario'] as Map<String, dynamic>);
+      if (user.id != id) throw const FormatException();
+      return user;
+    } on ApiFailure {
+      rethrow;
+    } catch (_) {
+      throw const ApiFailure(
+        'No pudimos confirmar la operación. Actualizá el listado antes de volver a intentarlo.',
+        mayHaveSaved: true,
+      );
+    }
+  }
+
   Future<List<DemandPrediction>> loadPredictions() async {
     final data = await _get('/predicciones/');
     try {
@@ -900,6 +1065,57 @@ class InventoryApi {
     } catch (_) {
       throw const ApiFailure(
         'No pudimos conectar para iniciar sesión. Intentá nuevamente.',
+      );
+    }
+  }
+
+  Future<void> changeOwnPassword(
+    String current,
+    String password,
+    String confirmation,
+  ) async {
+    final token = session.value?.token;
+    if (token == null) {
+      throw const ApiFailure('Iniciá sesión para cambiar tu contraseña.');
+    }
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('$baseUrl/auth/password'),
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json; charset=utf-8',
+            },
+            body: jsonEncode({
+              'passwordActual': current,
+              'password': password,
+              'confirmacion': confirmation,
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
+      final data =
+          jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+      if (response.statusCode != 200) {
+        final detail = data['detail'];
+        throw ApiFailure(
+          detail is String ? detail : 'No se pudo cambiar la contraseña.',
+          mayHaveSaved: response.statusCode >= 500,
+        );
+      }
+      if (data['passwordActualizada'] != true ||
+          data['sesionesCerradas'] != true) {
+        throw const FormatException();
+      }
+      // Una respuesta tardía no debe cerrar un nuevo ingreso que la reemplazó.
+      if (!_closed && session.value?.token == token) {
+        session.value = null;
+      }
+    } on ApiFailure {
+      rethrow;
+    } catch (_) {
+      throw const ApiFailure(
+        'No pudimos confirmar el cambio. Volvé a ingresar antes de reintentarlo.',
+        mayHaveSaved: true,
       );
     }
   }

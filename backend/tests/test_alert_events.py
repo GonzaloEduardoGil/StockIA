@@ -5,7 +5,7 @@ import threading
 import unittest
 from unittest.mock import MagicMock
 
-spec = importlib.util.spec_from_file_location('alert_events_under_test', Path(__file__).resolve().parents[1] / 'modules' / 'alert_events.py')
+spec = importlib.util.spec_from_file_location('alert_events_under_test', Path(__file__).resolve().parents[1] / 'funciones' / 'alertas.py')
 events_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(events_module)
 

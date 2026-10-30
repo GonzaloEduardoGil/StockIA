@@ -1,106 +1,127 @@
-# Componentes actuales de StockIA
+# Organización del backend por responsabilidad
 
-Implementación revisada el 25/10/2026. Los bloques del backend son módulos de
-una misma aplicación FastAPI.
-
-```mermaid
-flowchart LR
-    F["Frontend Flutter<br/>Web y Android"]
-
-    subgraph B[Backend Python]
-        S["server.py<br/>Arranque y configuración"]
-        A["modules/authentication.py<br/>Login, sesiones y permisos"]
-        M["main.py<br/>Productos, stock, ventas,<br/>análisis y generación de predicciones"]
-        Q["modules/prediction_queries.py<br/>modules/recommendation_queries.py<br/>Consulta de resultados guardados"]
-        E["modules/alert_events.py<br/>Observer y canal SSE"]
-        C["alert_events.py<br/>Puente de compatibilidad"]
-
-        S --> A
-        A -->|Operaciones autorizadas| M
-        A -->|Consultas autorizadas| Q
-        A -->|Solo roles de stock| E
-        M -.->|Importa la publicación| C
-        C -.->|Reexporta la función| E
-    end
-
-    DB[("PostgreSQL<br/>Supabase")]
-
-    F <-->|HTTP y JSON| S
-    M <-->|Datos y transacciones| DB
-    Q -->|Consulta| DB
-    A <-->|Usuarios y sesiones| DB
-    DB -->|NOTIFY tras commit| E
-    E -->|Aviso SSE para actualizar alertas| F
-```
-
-## Organización de archivos
+Revisado el 30/10/2026. Se conservan los archivos unificados y se ordenan por su
+función: sistema, acceso y funcionalidades complementarias. El traslado sólo
+cambia imports y ubicaciones; no cambia rutas, reglas, SQL ni la base.
 
 ```text
-StockIA/
+backend/
+├── main.py
+├── server.py
+├── sistema/
+│   ├── bootstrap.py
+│   ├── database.py
+│   └── validation.py
+├── acceso/
+│   ├── autenticacion.py
+│   └── usuarios.py
+├── funciones/
+│   ├── predicciones.py
+│   ├── recomendaciones.py
+│   └── alertas.py
+├── scripts/
+│   └── init_auth_db.py
+├── sql/
+│   ├── auth_schema.sql
+│   └── user_management_schema.sql
+├── tests/
 ├── requirements.txt
-├── instalar.ps1
-├── iniciar-stockia.ps1
-├── iniciar-backend.ps1
-├── iniciar-web.ps1
-├── compilar-apk.ps1
-├── backend/
-│   ├── main.py
-│   ├── server.py
-│   ├── alert_events.py
-│   ├── modules/
-│   │   ├── authentication.py
-│   │   ├── prediction_queries.py
-│   │   ├── recommendation_queries.py
-│   │   └── alert_events.py
-│   ├── scripts/
-│   │   └── init_auth_db.py
-│   ├── sql/
-│   ├── tests/
-│   ├── requirements.txt
-│   └── requirements-dev.txt
-├── frontend/
-│   ├── lib/
-│   │   ├── data/
-│   │   ├── models/
-│   │   ├── screens/
-│   │   └── widgets/
-│   ├── test/
-│   ├── assets/
-│   ├── android/
-│   └── web/
-├── docs/
-└── referencias/frontend-react/
+└── requirements-dev.txt
 ```
 
-Los `__init__.py` de los paquetes Python se omiten del árbol para facilitar la lectura.
+Se omiten los `__init__.py`, que declaran los paquetes. Los comandos de instalación
+y arranque permanecen en la raíz del proyecto.
 
-## Cómo se conectan
+## Responsabilidad de cada archivo
 
-- `server.py` reutiliza la aplicación de `main.py` y registra autenticación,
-  consultas, eventos y CORS. El comando de arranque usa `server:app`.
-- `main.py` conserva su contenido y la conexión a la base. Autenticación y
-  consultas siguen utilizando `main.obtener_conexion()`.
-- `backend/alert_events.py` solo reexporta `publish_alert_change` desde
-  `modules/alert_events.py`, para conservar los imports originales de `main.py`.
-- `scripts/init_auth_db.py` prepara sesiones aplicando `sql/auth_schema.sql`.
-  Es una tarea de preparación, no un servicio que quede ejecutándose.
-- `iniciar-stockia.ps1` coordina el arranque local; los otros `.ps1` permiten
-  iniciar cada parte o compilar Android por separado.
-- `instalar.ps1` prepara las dependencias de Python y Flutter desde la raíz.
-- XGBoost se ejecuta dentro de `main.py`. La API puede generar predicciones;
-  la interfaz actual consulta las que ya están guardadas.
-- `referencias/frontend-react/` conserva el front anterior como referencia.
+| Archivo | Responsabilidad |
+| --- | --- |
+| `main.py` | Crea app y conserva productos, stock, movimientos, ventas, consultas de alertas, dashboard, análisis individual, generación y decisión de recomendaciones, y la entrada manual de predicciones |
+| `server.py` | Reexporta `main.app` para los comandos de ejecución |
+| `sistema/bootstrap.py` | Registra rutas, seguridad, CORS y ciclos de vida sobre la misma app |
+| `sistema/database.py` | Configuración y pool, conexiones, transacciones y conexión dedicada del Observer |
+| `sistema/validation.py` | Validación compartida de contraseñas y errores sin datos sensibles |
+| `acceso/autenticacion.py` | Login, logout, usuario actual, contraseña propia, hashes, sesiones y permisos |
+| `acceso/usuarios.py` | Alta, edición, estado, rol y restablecimiento de contraseña de usuarios |
+| `funciones/predicciones.py` | Consulta guardada, cálculo original compartido y programación semanal |
+| `funciones/recomendaciones.py` | Consulta de recomendaciones guardadas; generarlas sigue en main |
+| `funciones/alertas.py` | Publicación de cambios, Observer, escucha y eventos SSE |
+| `scripts/init_auth_db.py` | Comando de preparación de autenticación |
+| `sql/auth_schema.sql` | Preparación de sesiones y seguridad de acceso |
+| `sql/user_management_schema.sql` | Preparación de estado de usuarios y unicidad de email |
 
-## Ejemplo: venta y actualización de alertas
+Los archivos requirements conservan las dependencias de ejecución y pruebas.
+`tests/` contiene las comprobaciones automatizadas y no atiende solicitudes.
 
-1. Flutter envía la venta y el token de sesión; el backend verifica permisos.
-2. `main.py` registra venta, detalle y movimiento, y descuenta stock. Si
-   corresponde, registra una alerta. Publica la señal dentro de esa transacción.
-3. PostgreSQL entrega NOTIFY después del commit. Un rollback no entrega el aviso.
-4. El Observer avisa por SSE a las sesiones de Administrador y Encargado.
-5. Flutter consulta las alertas y actualiza la campanita y la lista abierta.
-   Las consultas manuales y automáticas comparten la actualización.
+## Conexiones entre archivos reales
 
-Los avisos SSE requieren la aplicación abierta; no incluyen push con la APK cerrada.
+Las flechas representan dependencias, llamadas o registro; no el recorrido
+obligatorio de cada solicitud. Cada caja es un archivo real de backend.
 
-Para preparar y ejecutar el proyecto: [Instalación e inicio](../INSTALACION.md).
+```mermaid
+flowchart TD
+    S["server.py"] -->|expone app| M["main.py"]
+    M -->|configura app| B["sistema/bootstrap.py"]
+    M -->|consulta y guarda| D["sistema/database.py"]
+    M -->|pedido manual| P["funciones/predicciones.py"]
+    M -->|publica cambios| E["funciones/alertas.py"]
+    B -.->|registra rutas y permisos| A["acceso/autenticacion.py"]
+    B -.->|registra rutas e inicio| U["acceso/usuarios.py"]
+    B -.->|registra consulta e inicia semanal| P
+    B -.->|registra consulta| R["funciones/recomendaciones.py"]
+    B -.->|inicia Observer| E
+    B -.->|inicia y cierra pool| D
+    A --> D
+    A --> V["sistema/validation.py"]
+    U --> A
+    U --> D
+    U --> V
+    P --> D
+    R --> D
+    E -->|revalida sesión| A
+    E -.->|usa conexión dedicada recibida| D
+    I["scripts/init_auth_db.py"] --> A
+    A -->|preparación de autenticación| Q["sql/auth_schema.sql"]
+    U -->|preparación de usuarios| W["sql/user_management_schema.sql"]
+```
+
+## Comportamiento conservado
+
+La mayor parte del negocio sigue en `main.py`. No se extrajeron más operaciones
+de ese archivo. Las rutas registradas desde otros archivos forman parte de la
+misma aplicación; no pasan por una función intermediaria de main.
+
+Los permisos se comprueban antes de ejecutar una operación protegida. El pool
+presta conexiones; las consultas siguen en las funciones correspondientes.
+Una venta sigue confirmando venta, detalles, stock, movimientos y alertas en una
+sola transacción, con notificaciones entregadas sólo después del commit.
+
+Predicciones manuales y automáticas usan el mismo cálculo. La automática mantiene
+el domingo cerrado como corte y el bloqueo transaccional durante cálculo y
+guardado. Las recomendaciones siguen tomando la última predicción guardada.
+No se crea ni utiliza una tabla auxiliar de predicciones.
+
+## Compatibilidad y verificación
+
+- `main:app` y `server:app` conservan la misma aplicación protegida.
+- OpenAPI completo idéntico antes y después: 31 rutas y 35 operaciones.
+- Todos los archivos Python mantienen su contenido salvo imports y ubicaciones
+  utilizadas por las pruebas. Las rutas relativas a SQL siguen resolviendo a los
+  mismos archivos originales.
+- No quedan los paquetes anteriores ni archivos puente. Se actualizaron las pruebas
+  y `scripts/init_auth_db.py` para usar las ubicaciones nuevas.
+- 105 pruebas de backend aprobadas, incluidas sesiones, roles, usuarios, pool,
+  consultas, predicciones, Observer, transacciones y ciclo de vida.
+- PostgreSQL y XGBoost con tablas temporales y rollback: equivalencia del cálculo,
+  manuales 1/14/30, automática, recuperación, bloqueo, duplicados e historial y
+  recomendaciones comprobados. No se modifican datos reales.
+
+El frontend, dependencias, comandos y SQL permanecen sin cambios funcionales.
+No se hicieron commit ni push.
+
+- [Instalación](../INSTALACION.md)
+- [Autenticación](AUTH_SETUP.md)
+- [Usuarios](USUARIOS.md)
+- [Predicciones](PREDICCIONES.md)
+- [Observer](ALERTAS_OBSERVER.md)
+- [Pool](DATABASE_POOL.md)

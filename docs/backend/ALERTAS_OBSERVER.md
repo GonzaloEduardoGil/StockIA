@@ -3,9 +3,11 @@
 El arranque sigue siendo `uvicorn server:app`. No hay dependencias nuevas ni
 migraciones de tablas. El aviso funciona mientras la aplicación está abierta.
 
-La implementación está en `backend/modules/alert_events.py`. El archivo
-`backend/alert_events.py` solo conserva el import de publicación que utiliza
-el backend original, de modo que `main.py` permanece intacto.
+La implementación completa está en `backend/funciones/alertas.py`. Las consultas
+y la comprobación compartida de stock bajo permanecen en `main.py`, que importa
+directamente `publish_alert_change` de ese archivo. No hay puente intermedio.
+La conexión dedicada se prepara desde `sistema/database.py` y el ciclo de vida se
+registra desde `sistema/bootstrap.py`.
 
 ## Recorrido
 
@@ -32,7 +34,7 @@ Los avisos no cambian de pantalla ni descartan formularios abiertos.
 
 `LISTEN` requiere una conexión directa a PostgreSQL o un pooler en modo sesión
 (en Supabase, puerto 5432). No usar el modo transacción, puerto 6543. Por defecto
-el observador utiliza la URL existente del backend; `ALERTS_DATABASE_URL` permite
+el observador utiliza la URL de `sistema/database.py`; `ALERTS_DATABASE_URL` permite
 configurar una conexión de sesión separada. No hace falta activar Supabase
 Realtime ni crear una publicación.
 

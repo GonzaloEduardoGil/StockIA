@@ -5,10 +5,18 @@
 
 | Carpeta o archivo | Contenido |
 | --- | --- |
-| `backend/main.py` | Backend original y conexión a la base; se conserva sin cambios |
-| `backend/server.py` | Arranque web y registro de los módulos |
-| `backend/modules/` | Autenticación, consultas de predicciones y recomendaciones y Observer de alertas |
-| `backend/alert_events.py` | Compatibilidad con los imports del backend original |
+| `backend/main.py` | Código original de productos, stock, movimientos, ventas, alertas, dashboard y recomendaciones, integrado con los módulos actuales |
+| `backend/sistema/` | Infraestructura y configuración compartidas |
+| `backend/acceso/` | Autenticación, sesiones, permisos y administración de usuarios |
+| `backend/funciones/` | Predicciones, consulta de recomendaciones y avisos de alertas |
+| `backend/sistema/database.py` | Configuración de la base, pool compartido y conexión dedicada del Observer |
+| `backend/server.py` | Entrada compatible: reexporta la aplicación autenticada de main.py |
+| `backend/sistema/bootstrap.py` | Registro de módulos, seguridad, CORS y ciclos de vida sobre la misma aplicación |
+| `backend/sistema/validation.py` | Validación compartida de contraseñas y errores sin datos privados |
+| `backend/acceso/autenticacion.py` | Login, contraseñas, sesiones y permisos |
+| `backend/acceso/usuarios.py` | Gestión de usuarios por el administrador |
+| `backend/funciones/predicciones.py` | Consulta, cálculo y programación semanal de predicciones |
+| `backend/funciones/alertas.py` | Publicación de cambios, Observer y SSE |
 | `backend/scripts/` | Preparación del backend mediante comandos de desarrollo |
 | `backend/tests/` | Pruebas automatizadas sin acceso a la base real |
 | `backend/sql/` | SQL de preparación de sesiones |
@@ -25,11 +33,12 @@
 | `iniciar-stockia.ps1` | Inicia backend y web y abre el navegador |
 | `iniciar-backend.ps1`, `iniciar-web.ps1`, `compilar-apk.ps1` | Comandos individuales de desarrollo desde la raíz |
 
-El backend web arranca con `server:app`. Se conserva el backend original en
-`main.py` y su configuración de base de datos.
+El backend web arranca con `server:app`. La conexión se centraliza en
+`sistema/database.py`, conservando el valor de la URL configurada.
 
-Los módulos siguen utilizando `main.obtener_conexion()`. La conexión no se
-extrajo a otro archivo. Para preparar sesiones, ejecutar desde `backend/`:
+El backend y los módulos utilizan el mismo pool por proceso. La autenticación
+y las consultas utilizan `sistema/` sin depender del punto de arranque. Ver [pool de conexiones](backend/DATABASE_POOL.md).
+Para preparar sesiones, ejecutar desde `backend/`:
 
 ```powershell
 .\.venv\Scripts\python.exe -m scripts.init_auth_db
@@ -76,3 +85,13 @@ flutter analyze
 
 Las carpetas de compilación, cachés, entornos virtuales y logs no se versionan.
 Los datos de acceso de prueba se conservan fuera de este repositorio.
+
+## Predicciones automáticas semanales
+
+La consulta, el cálculo y la programación semanal están reunidos en
+`backend/funciones/predicciones.py`. El dashboard permite
+consultar los resultados guardados por producto. La generación es automática; no utiliza tablas auxiliares. Ver [funcionamiento y configuración](backend/PREDICCIONES.md).
+
+## Gestión de usuarios
+
+El alta, edición de identidad y listado exclusivos del administrador están en backend/acceso/usuarios.py y frontend/lib/screens/users_screen.dart. Ver [uso y validaciones](backend/USUARIOS.md).

@@ -4,18 +4,16 @@ Este módulo reúne las rutas implementadas hasta CU 11:
 productos, stock, movimientos y ventas.
 """
 
-import os
 from datetime import date
 from decimal import Decimal
 from typing import List, Optional
 from math import ceil
 
-import psycopg2
 from fastapi import FastAPI, HTTPException, Query
+from sistema.database import DATABASE_URL, obtener_conexion
 from pydantic import BaseModel, Field
+from funciones.predicciones import SolicitudPrediccion
 
-import pandas as pd
-from xgboost import XGBRegressor
 
 # -----------------------------------------------------------------------------
 # Configuración
@@ -26,17 +24,6 @@ app = FastAPI(
     description="Backend para el sistema inteligente de gestión de inventario",
     version="1.0.0",
 )
-
-# Nunca guardar la contraseña de Supabase dentro de este archivo.
-# En Windows, antes de iniciar la API, configurar DATABASE_URL en el entorno.
-DATABASE_URL = "postgresql://postgres.ciohdzojeekegzxaepyu:xM2Adp11T1dVt4At@aws-0-us-east-1.pooler.supabase.com:5432/postgres"
-
-
-def obtener_conexion():
-    """Devuelve una conexión nueva a PostgreSQL."""
-    if not DATABASE_URL:
-        raise RuntimeError("La variable de entorno DATABASE_URL no está configurada.")
-    return psycopg2.connect(DATABASE_URL)
 
 
 def cerrar_recursos(conn, cursor) -> None:
@@ -99,8 +86,6 @@ class DecisionRecomendacion(BaseModel):
     idUsuario: int
     estado: str
 
-class SolicitudPrediccion(BaseModel):
-    diasPrediccion: int = Field(ge=1, le=30)
 # -----------------------------------------------------------------------------
 # Funciones auxiliares
 # -----------------------------------------------------------------------------
@@ -124,7 +109,7 @@ def detectar_stock_bajo(cursor, id_producto: int):
     nombre, activo, stock_minimo, cantidad_disponible = producto
     # Invalida también avisos que dejaron de estar vigentes por una reposición.
     # La señal se entrega solo si la operación termina con COMMIT.
-    from alert_events import publish_alert_change
+    from funciones.alertas import publish_alert_change
     publish_alert_change(cursor)
     if not activo or cantidad_disponible > stock_minimo:
         return None
@@ -374,7 +359,7 @@ def dar_baja_producto(id_producto: int):
             (id_producto,),
         )
         producto = cursor.fetchone()
-        from alert_events import publish_alert_change
+        from funciones.alertas import publish_alert_change
         publish_alert_change(cursor)
         conn.commit()
 
@@ -1907,198 +1892,9 @@ def generar_prediccion(
     id_producto: int,
     datos: SolicitudPrediccion
 ):
-    conn = None
-    cursor = None
+    from funciones import predicciones
+    return predicciones.generar_prediccion(id_producto, datos)
 
-    try:
-        conn = obtener_conexion()
-        cursor = conn.cursor()
 
-        # Verifica el producto
-        cursor.execute("""
-            SELECT nombre, activo
-            FROM PRODUCTO
-            WHERE "idProducto" = %s;
-        """, (id_producto,))
-
-        producto = cursor.fetchone()
-
-        if producto is None:
-            raise HTTPException(
-                status_code=404,
-                detail="No se encontró el producto solicitado."
-            )
-
-        nombre_producto, activo = producto
-
-        if not activo:
-            raise HTTPException(
-                status_code=409,
-                detail="No se pueden generar predicciones para un producto inactivo."
-            )
-
-        # Obtiene ventas agrupadas por día
-        cursor.execute("""
-            SELECT
-                v.fecha,
-                SUM(dv.cantidad) AS cantidad_vendida
-            FROM "DETALLE_VENTA" dv
-            INNER JOIN "VENTA" v
-                ON v."idVenta" = dv."idVenta"
-            WHERE dv."idProducto" = %s
-            GROUP BY v.fecha
-            ORDER BY v.fecha;
-        """, (id_producto,))
-
-        filas = cursor.fetchall()
-
-        if len(filas) < 14:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "No hay suficiente historial para entrenar el modelo. "
-                    "Se requieren al menos 14 días de ventas."
-                )
-            )
-
-        ventas = pd.DataFrame(
-            filas,
-            columns=["fecha", "cantidadVendida"]
-        )
-
-        ventas["fecha"] = pd.to_datetime(ventas["fecha"])
-
-        # Completa con cero los días en que no hubo ventas
-        rango_fechas = pd.date_range(
-            start=ventas["fecha"].min(),
-            end=pd.Timestamp(date.today()),
-            freq="D"
-        )
-
-        serie_ventas = (
-            ventas
-            .set_index("fecha")["cantidadVendida"]
-            .reindex(rango_fechas, fill_value=0)
-            .astype(float)
-        )
-
-        # Crea variables para el modelo
-        entrenamiento = pd.DataFrame({
-            "cantidad": serie_ventas
-        })
-
-        entrenamiento["venta_dia_anterior"] = (
-            entrenamiento["cantidad"].shift(1)
-        )
-
-        entrenamiento["venta_hace_7_dias"] = (
-            entrenamiento["cantidad"].shift(7)
-        )
-
-        entrenamiento["promedio_ultimos_7_dias"] = (
-            entrenamiento["cantidad"]
-            .shift(1)
-            .rolling(window=7)
-            .mean()
-        )
-
-        entrenamiento = entrenamiento.dropna()
-
-        if len(entrenamiento) < 7:
-            raise HTTPException(
-                status_code=422,
-                detail="No hay suficientes datos para entrenar XGBoost."
-            )
-
-        columnas = [
-            "venta_dia_anterior",
-            "venta_hace_7_dias",
-            "promedio_ultimos_7_dias"
-        ]
-
-        X = entrenamiento[columnas]
-        y = entrenamiento["cantidad"]
-
-        modelo = XGBRegressor(
-            objective="reg:squarederror",
-            n_estimators=150,
-            max_depth=3,
-            learning_rate=0.05,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            random_state=42,
-            n_jobs=1
-        )
-
-        modelo.fit(X, y)
-
-        # Predice día por día para el período solicitado
-        historial = list(serie_ventas.values)
-        predicciones_diarias = []
-
-        for _ in range(datos.diasPrediccion):
-            datos_entrada = pd.DataFrame([{
-                "venta_dia_anterior": historial[-1],
-                "venta_hace_7_dias": historial[-7],
-                "promedio_ultimos_7_dias": sum(historial[-7:]) / 7
-            }])
-
-            prediccion = float(modelo.predict(datos_entrada)[0])
-            prediccion = max(0, prediccion)
-
-            historial.append(prediccion)
-            predicciones_diarias.append(prediccion)
-
-        cantidad_estimada = ceil(sum(predicciones_diarias))
-        periodo = f"Próximos {datos.diasPrediccion} días"
-
-        # Guarda el resultado para consultas y recomendaciones posteriores
-        cursor.execute("""
-            INSERT INTO "PREDICCION_DEMANDA" (
-                "idProducto",
-                "fechaPrediccion",
-                "periodoPrediccion",
-                "cantidadEstimada"
-            )
-            VALUES (%s, CURRENT_DATE, %s, %s)
-            RETURNING "idPrediccion";
-        """, (
-            id_producto,
-            periodo,
-            cantidad_estimada
-        ))
-
-        id_prediccion = cursor.fetchone()[0]
-        conn.commit()
-
-        return {
-            "mensaje": "Predicción generada con éxito.",
-            "idPrediccion": id_prediccion,
-            "idProducto": id_producto,
-            "nombreProducto": nombre_producto,
-            "periodoPrediccion": periodo,
-            "cantidadEstimada": cantidad_estimada,
-            "prediccionesDiarias": [
-                round(prediccion, 2)
-                for prediccion in predicciones_diarias
-            ]
-        }
-
-    except HTTPException:
-        if conn:
-            conn.rollback()
-        raise
-
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"No se pudo generar la predicción: {str(e)}"
-        )
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+from sistema.bootstrap import configurar_aplicacion
+configurar_aplicacion(app)

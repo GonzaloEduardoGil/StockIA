@@ -5,6 +5,7 @@ import '../data/inventory_api.dart';
 import '../models/product.dart';
 import '../widgets/product_details.dart';
 import '../widgets/stock_notifications.dart';
+import '../widgets/change_password_dialog.dart';
 import 'new_product_form.dart';
 import 'movements_screen.dart';
 import 'new_sale_screen.dart';
@@ -12,6 +13,7 @@ import 'sales_screen.dart';
 import 'alerts_screen.dart';
 import 'recommendations_screen.dart';
 import 'dashboard_screen.dart';
+import 'users_screen.dart';
 import 'inventory_operation_page.dart';
 import '../models/inventory_action.dart';
 
@@ -57,6 +59,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
   bool _salesVisible = false;
   bool _salesHistory = false;
   bool _alertsVisible = false;
+  bool _usersVisible = false;
   bool _recommendationsVisible = false;
   int? _alertProductId;
   int _alertsVisit = 0;
@@ -228,6 +231,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
     if (!_canAction(action)) return;
     if (_operationBusy) return;
     setState(() {
+      _usersVisible = false;
       _recommendationsVisible = false;
       _dashboardVisible = false;
       _alertsVisible = false;
@@ -252,10 +256,39 @@ class _InventoryScreenState extends State<InventoryScreen> {
     }
   }
 
+  Future<void> _changeOwnPassword() async {
+    if (_operationBusy) return;
+    setState(() => _operationBusy = true);
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => ChangePasswordDialog(api: widget.api),
+      );
+    } finally {
+      if (mounted) setState(() => _operationBusy = false);
+    }
+  }
+
+  void _openUsers() {
+    if (widget.currentUserRole != 'Administrador' || _operationBusy) return;
+    setState(() {
+      _usersVisible = true;
+      _recommendationsVisible = false;
+      _dashboardVisible = false;
+      _alertsVisible = false;
+      _salesVisible = false;
+      _movementsVisible = false;
+      _action = null;
+      _operationProduct = null;
+    });
+  }
+
   void _openMovements() {
     if (!_stockRole) return;
     if (_operationBusy) return;
     setState(() {
+      _usersVisible = false;
       _recommendationsVisible = false;
       _dashboardVisible = false;
       _alertsVisible = false;
@@ -270,6 +303,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
     if (!_seller) return;
     if (_operationBusy) return;
     setState(() {
+      _usersVisible = false;
       _recommendationsVisible = false;
       _dashboardVisible = false;
       _alertsVisible = false;
@@ -284,6 +318,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
   void _openSalesHistory() {
     if (_operationBusy) return;
     setState(() {
+      _usersVisible = false;
       _recommendationsVisible = false;
       _dashboardVisible = false;
       _alertsVisible = false;
@@ -299,6 +334,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
     if (!_stockRole) return;
     if (_operationBusy) return;
     setState(() {
+      _usersVisible = false;
       _recommendationsVisible = false;
       _alertProductId = productId;
       ++_alertsVisit;
@@ -315,6 +351,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
     if (!_stockRole) return;
     if (_operationBusy) return;
     setState(() {
+      _usersVisible = false;
       _recommendationsVisible = false;
       _analysisProductId = null;
       _dashboardVisible = true;
@@ -330,6 +367,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
     if (!_stockRole) return;
     if (_operationBusy) return;
     setState(() {
+      _usersVisible = false;
       _recommendationsVisible = true;
       _dashboardVisible = false;
       _alertsVisible = false;
@@ -395,6 +433,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
       final wide = viewport.maxWidth >= 1280;
       return PopScope(
         canPop:
+            !_usersVisible &&
             !_recommendationsVisible &&
             !_dashboardVisible &&
             !_alertsVisible &&
@@ -402,7 +441,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
             !_salesVisible,
         onPopInvokedWithResult: (didPop, result) {
           if (!didPop &&
-              (_recommendationsVisible ||
+              (_usersVisible ||
+                  _recommendationsVisible ||
                   _dashboardVisible ||
                   _alertsVisible ||
                   _movementsVisible ||
@@ -432,7 +472,13 @@ class _InventoryScreenState extends State<InventoryScreen> {
                     children: [
                       _header(desktop, mobile),
                       Expanded(
-                        child: _recommendationsVisible
+                        child: _usersVisible
+                            ? UsersScreen(
+                                api: widget.api,
+                                onBusyChanged: (busy) =>
+                                    setState(() => _operationBusy = busy),
+                              )
+                            : _recommendationsVisible
                             ? RecommendationsScreen(
                                 api: widget.api,
                                 currentUserId: widget.currentUserId,
@@ -654,6 +700,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                 key: const Key('nav-inventory'),
                 contentPadding: const EdgeInsets.only(left: 36, right: 12),
                 selected:
+                    !_usersVisible &&
                     !_recommendationsVisible &&
                     !_dashboardVisible &&
                     !_alertsVisible &&
@@ -678,6 +725,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                         right: 12,
                       ),
                       selected:
+                          !_usersVisible &&
                           !_recommendationsVisible &&
                           !_dashboardVisible &&
                           !_alertsVisible &&
@@ -728,6 +776,19 @@ class _InventoryScreenState extends State<InventoryScreen> {
               onTap: () {
                 if (drawer) Navigator.pop(context);
                 _openAlerts();
+              },
+            ),
+          if (widget.currentUserRole == 'Administrador')
+            ListTile(
+              key: const Key('nav-users'),
+              leading: const Icon(Icons.manage_accounts_outlined, color: navy),
+              title: const Text('Usuarios'),
+              selected: _usersVisible,
+              selectedTileColor: const Color(0xFFEBF1F9),
+              enabled: !_operationBusy,
+              onTap: () {
+                if (drawer) Navigator.pop(context);
+                _openUsers();
               },
             ),
           ExpansionTile(
@@ -832,7 +893,9 @@ class _InventoryScreenState extends State<InventoryScreen> {
         if (desktop) const Spacer(),
         if (!mobile)
           Text(
-            _recommendationsVisible
+            _usersVisible
+                ? 'Usuarios'
+                : _recommendationsVisible
                 ? 'Recomendaciones'
                 : _dashboardVisible
                 ? (_analysisProductId == null
@@ -864,6 +927,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
             icon: const Icon(Icons.account_circle_outlined, color: navy),
             onSelected: (value) async {
               if (value == 'logout') await widget.onLogout?.call();
+              if (value == 'password') await _changeOwnPassword();
             },
             itemBuilder: (context) => [
               PopupMenuItem<String>(
@@ -878,6 +942,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
                 child: Text(widget.currentUserRole ?? ''),
               ),
               const PopupMenuDivider(),
+              const PopupMenuItem<String>(
+                value: 'password',
+                child: Text('Cambiar mi contraseña'),
+              ),
               const PopupMenuItem<String>(
                 value: 'logout',
                 child: Text('Cerrar sesión'),
