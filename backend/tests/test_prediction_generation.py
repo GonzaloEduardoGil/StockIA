@@ -62,7 +62,7 @@ class PredictionGenerationTest(unittest.TestCase):
         self.assertEqual(model.fit.call_args.args[1].iloc[-1],0)
 
     def test_occupied_product_or_completed_week_does_not_train(self):
-        for answers in [[(False,)],[(True,),(1,)]]:
+        for answers in [[(False,)],[(True,),(self.sunday,"Semanal: 2026-10-26 a 2026-11-01")]]:
             conn,cursor=self.connection();cursor.fetchone.side_effect=answers
             with patch.object(service,'obtener_conexion',return_value=conn),patch.object(service,'XGBRegressor') as model:
                 self.assertIsNone(service.generar_prediccion(7,service.SolicitudPrediccion(diasPrediccion=7),fecha_historial=self.sunday))
@@ -97,7 +97,7 @@ class PredictionGenerationTest(unittest.TestCase):
                 acquire.assert_not_called()
 
     def test_worker_keeps_closed_sunday_on_recovery_and_year_change(self):
-        cursor=MagicMock();cursor.fetchall.return_value=[(7,),(8,)]
+        cursor=MagicMock();cursor.fetchall.return_value=[(7,None,None),(8,None,None)]
         @contextmanager
         def transaction():yield cursor
         for today in [date(2026,10,26),date(2026,10,29),date(2026,11,1),date(2027,1,1)]:
@@ -109,7 +109,7 @@ class PredictionGenerationTest(unittest.TestCase):
             self.assertEqual(generate.call_args.args[0],8)
             self.assertEqual(generate.call_args.args[1].diasPrediccion,7)
             self.assertEqual(generate.call_args.kwargs,{'fecha_historial':sunday})
-            self.assertEqual(cursor.execute.call_args.args[1],(service.periodo_semanal(sunday),))
+            self.assertIn('LEFT JOIN LATERAL',cursor.execute.call_args.args[0])
 
     def test_manual_original_1_14_30_uses_today_and_exactly_n_predictions(self):
         import main

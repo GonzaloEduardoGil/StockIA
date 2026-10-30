@@ -8,6 +8,7 @@ import '../models/product_analysis.dart';
 import '../models/stock_movement.dart';
 import '../widgets/date_filter_field.dart';
 import '../widgets/prediction_card.dart';
+import '../widgets/generate_prediction_dialog.dart';
 import '../widgets/sales_trend_chart.dart';
 
 class ProductAnalysisScreen extends StatefulWidget {
@@ -36,6 +37,7 @@ class _ProductAnalysisScreenState extends State<ProductAnalysisScreen> {
   bool _loading = true;
   int _request = 0;
   int? _selectedPrediction;
+  bool _generating = false;
   @override
   void initState() {
     super.initState();
@@ -81,6 +83,36 @@ class _ProductAnalysisScreenState extends State<ProductAnalysisScreen> {
             : 'No se pudo cargar el análisis del producto.';
       });
     }
+  }
+
+  Future<void> _generatePrediction() async {
+    if (_generating ||
+        _loading ||
+        _data?.active != true ||
+        widget.api.session.value?.stockRole != true) {
+      return;
+    }
+    setState(() => _generating = true);
+    final id = await showDialog<int>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => GeneratePredictionDialog(
+        api: widget.api,
+        productId: widget.productId,
+        productName: _data!.name,
+      ),
+    );
+    if (!mounted) return;
+    setState(() {
+      _generating = false;
+      if (id != null && id > 0) _selectedPrediction = id;
+    });
+    if (id == null) return;
+    if (id > 0) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Predicción generada.')));
+    }
+    await _load();
   }
 
   String? get _dateError {
@@ -149,6 +181,15 @@ class _ProductAnalysisScreenState extends State<ProductAnalysisScreen> {
                   icon: const Icon(Icons.refresh, size: 18),
                   label: const Text('Actualizar'),
                 ),
+                if (_data?.active == true &&
+                    widget.api.session.value?.stockRole == true)
+                  FilledButton.icon(
+                    onPressed: _loading || _generating
+                        ? null
+                        : _generatePrediction,
+                    icon: const Icon(Icons.auto_graph, size: 18),
+                    label: const Text('Generar predicción'),
+                  ),
               ],
             ),
             const SizedBox(height: 20),

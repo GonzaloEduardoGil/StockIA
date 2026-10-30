@@ -76,7 +76,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('Actualización automática semanal'), findsOneWidget);
-      expect(find.text('PREDICCIÓN SEMANAL'), findsOneWidget);
+      expect(find.text('PREDICCIÓN'), findsOneWidget);
       expect(find.text('Generar predicción'), findsNothing);
       expect(find.text('Cantidad de días'), findsNothing);
       expect(find.text('Consultar producto'), findsNothing);

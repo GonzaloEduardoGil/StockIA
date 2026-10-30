@@ -12,6 +12,8 @@ class DemandPrediction {
     this.origin,
     this.from,
     this.to,
+    this.isValid,
+    this.isCurrent,
   });
   final int id;
   final int productId;
@@ -23,6 +25,8 @@ class DemandPrediction {
   final String? origin;
   final DateTime? from;
   final DateTime? to;
+  final bool? isValid;
+  final bool? isCurrent;
   factory DemandPrediction.fromApi(
     Map<String, dynamic> data, {
     int? productId,
@@ -47,6 +51,8 @@ class DemandPrediction {
               : null),
       from: DateTime.tryParse(data['fechaDesde'] as String? ?? ''),
       to: DateTime.tryParse(data['fechaHasta'] as String? ?? ''),
+      isValid: data['vigente'] as bool?,
+      isCurrent: data['esActual'] as bool?,
       units: dashboardAmount(data['cantidadEstimada']),
       active: active ?? data['activo'] as bool? ?? true,
     );

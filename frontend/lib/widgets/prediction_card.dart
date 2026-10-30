@@ -35,11 +35,7 @@ class PredictionCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(5),
                 ),
                 child: Text(
-                  prediction.origin == 'Semanal'
-                      ? 'PREDICCIÓN SEMANAL'
-                      : prediction.origin == 'Manual'
-                      ? 'PREDICCIÓN MANUAL'
-                      : 'PREDICCIÓN',
+                  'PREDICCIÓN',
                   style: const TextStyle(
                     color: predictionPurple,
                     fontWeight: FontWeight.w700,
@@ -80,7 +76,21 @@ class PredictionCard extends StatelessWidget {
                 : 'Horizonte al generarse: ${prediction.period}',
             style: const TextStyle(color: muted, fontSize: 12),
           ),
-          if (prediction.to != null &&
+          if (prediction.isCurrent == false)
+            const Text(
+              'Predicción reemplazada',
+              style: TextStyle(color: muted, fontSize: 12),
+            )
+          else if (prediction.isValid != null)
+            Text(
+              prediction.isValid!
+                  ? 'Vigente'
+                  : prediction.to == null
+                  ? 'Vigencia no informada'
+                  : 'Período finalizado',
+              style: const TextStyle(color: muted, fontSize: 12),
+            )
+          else if (prediction.to != null &&
               prediction.to!.isBefore(
                 DateTime.now().subtract(const Duration(days: 1)),
               ))

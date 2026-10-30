@@ -849,6 +849,54 @@ class InventoryApi {
     }
   }
 
+  Future<int> generatePrediction(int productId, int days) async {
+    if (session.value?.stockRole != true) {
+      throw const ApiFailure('No tenés permisos para generar predicciones.');
+    }
+    if (days < 1 || days > 30) {
+      throw const ApiFailure('Ingresá una cantidad entera entre 1 y 30 días.');
+    }
+    try {
+      final response = await _client
+          .post(
+            Uri.parse('$baseUrl/predicciones/$productId/generar'),
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json; charset=utf-8',
+            },
+            body: jsonEncode({'diasPrediccion': days}),
+          )
+          .timeout(const Duration(seconds: 120));
+      if (response.statusCode >= 500) {
+        throw const ApiFailure(
+          'No se pudo confirmar la predicción. Actualizá el análisis antes de intentar otra vez.',
+          mayHaveSaved: true,
+        );
+      }
+      final body = jsonDecode(utf8.decode(response.bodyBytes));
+      if (response.statusCode != 200) {
+        final detail = body is Map<String, dynamic> ? body['detail'] : null;
+        throw ApiFailure(
+          detail is String ? detail : 'No se pudo generar la predicción. Revisá los datos o tu acceso.',
+        );
+      }
+      if (body is! Map<String, dynamic> ||
+          body['idProducto'] != productId ||
+          body['idPrediccion'] is! int ||
+          (body['idPrediccion'] as int) <= 0) {
+        throw const FormatException();
+      }
+      return body['idPrediccion'] as int;
+    } on ApiFailure {
+      rethrow;
+    } catch (_) {
+      throw const ApiFailure(
+        'No se pudo confirmar la predicción. Actualizá el análisis antes de intentar otra vez.',
+        mayHaveSaved: true,
+      );
+    }
+  }
+
   Future<List<DemandPrediction>> loadPredictions() async {
     final data = await _get('/predicciones/');
     try {

@@ -1496,14 +1496,16 @@ def consultar_analisis_producto(id_producto: int):
             ORDER BY "fechaPrediccion" DESC, "idPrediccion" DESC;
         """, (id_producto,))
 
+        from funciones.predicciones import datos_vigencia
         predicciones = [
             {
                 "idPrediccion": fila[0],
                 "fechaPrediccion": fila[1],
                 "periodoPrediccion": fila[2],
-                "cantidadEstimada": float(fila[3])
+                "cantidadEstimada": float(fila[3]),
+                **datos_vigencia(fila[1], fila[2], actual=indice == 0)
             }
-            for fila in cursor.fetchall()
+            for indice, fila in enumerate(cursor.fetchall())
         ]
 
         # Recomendaciones, incluidas aceptadas o rechazadas
@@ -1628,14 +1630,15 @@ def generar_recomendaciones(datos: SolicitudRecomendacion):
                 s."cantidadDisponible",
                 pred."cantidadEstimada",
                 pred."periodoPrediccion",
-                COALESCE(v30.cantidad_vendida, 0) AS ventas_30_dias
+                COALESCE(v30.cantidad_vendida, 0) AS ventas_30_dias,
+                pred."fechaPrediccion"
             FROM PRODUCTO p
             INNER JOIN "STOCK" s
                 ON s."idProducto" = p."idProducto"
             LEFT JOIN LATERAL (
                 SELECT
                     "cantidadEstimada",
-                    "periodoPrediccion"
+                    "periodoPrediccion", "fechaPrediccion"
                 FROM "PREDICCION_DEMANDA"
                 WHERE "idProducto" = p."idProducto"
                 ORDER BY "fechaPrediccion" DESC, "idPrediccion" DESC
@@ -1657,12 +1660,14 @@ def generar_recomendaciones(datos: SolicitudRecomendacion):
                 cantidad_disponible,
                 cantidad_estimada,
                 periodo_prediccion,
-                ventas_30_dias
+                ventas_30_dias,
+                fecha_prediccion
             ) = producto
 
             # Si existe una predicción, tiene prioridad.
             # Si no existe, se usa el historial de los últimos 30 días.
-            if cantidad_estimada is not None:
+            from funciones.predicciones import datos_vigencia
+            if cantidad_estimada is not None and datos_vigencia(fecha_prediccion, periodo_prediccion)['vigente']:
                 demanda_estimada = ceil(float(cantidad_estimada))
                 fuente_demanda = f"predicción para {periodo_prediccion}"
             else:

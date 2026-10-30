@@ -1,144 +1,56 @@
 # Predicciones de demanda
 
-## Uso actual
+## Uso
 
-Las predicciones se generan automáticamente al cierre del domingo, para el lunes
-a domingo siguientes. El dashboard y el análisis de producto permiten consultar
-resultados guardados e históricos. El formulario manual y sus botones siguen
-retirados del front. Se recuperó únicamente la ruta manual original del backend,
-`POST /predicciones/{id_producto}/generar`, para Administrador y Encargado de stock.
-Recibe `{"diasPrediccion": N}` con N entre 1 y 30, incluye hoy en el historial,
-predice exactamente los próximos N días y guarda `Próximos N días`, como el original.
-No cambia la base ni requiere una tabla auxiliar. Su aplicación en la interfaz
-queda para una decisión posterior.
+La automática genera predicciones para productos activos sin una predicción vigente al comienzo de la semana. Trabaja al cierre del domingo y cubre de lunes a domingo. Si la última predicción vence entre semana, espera al siguiente cierre semanal.
 
-El servidor revisa pendientes al arrancar y cada 30 minutos. Inicia la nueva semana
-en la primera revisión posterior a las 00:00 del lunes, hora argentina; no garantiza
-ejecutar exactamente a esa hora. Debe estar encendido. Si vuelve a mitad de semana,
-calcula la semana vigente usando como corte el domingo anterior, sin incorporar
-ventas posteriores. No recupera semanas ya terminadas.
+Desde el análisis de cada producto activo, Administrador y Encargado de stock pueden pulsar **Generar predicción**, indicar un entero de **1 a 30 días** y confirmar. El horizonte comienza mañana. Al terminar, se recarga el análisis y se selecciona la nueva predicción. El Vendedor no tiene permiso para generarla.
 
-`PREDICTIONS_WEEKLY_ENABLED=false` permite desactivar el proceso automático.
-Los comandos habituales `main:app` y `server:app` conservan la misma aplicación
-protegida. El cierre espera al producto que esté calculándose antes de cerrar el
-pool.
+La interfaz bloquea el doble envío y muestra los errores del servicio, incluidos falta de historial y producto ocupado. Si la respuesta no permite confirmar el resultado, exige actualizar el análisis antes de repetir.
 
-## Esquema original, sin tabla auxiliar
+## Vigencia e historial sin cambiar la base
 
-La ejecución no crea ni consulta `STOCKIA_PREDICCION_EJECUCION`. Sólo utiliza
-`PREDICCION_DEMANDA` con sus cinco columnas originales. No añade tablas, columnas,
-índices o restricciones.
+PREDICCION_DEMANDA mantiene sus cinco columnas originales: idPrediccion, idProducto, fechaPrediccion, periodoPrediccion y cantidadEstimada. Esta versión no crea ni elimina tablas, columnas, índices o restricciones; no requiere migración.
 
-El campo existente `periodoPrediccion` registra explícitamente las fechas:
+La vigencia se calcula a partir de fechaPrediccion y del horizonte de texto:
 
-```text
-Semanal: 2026-11-02 a 2026-11-08
-```
+- `Próximos N días`: desde el día posterior a la generación hasta fechaPrediccion + N, inclusive.
+- Los períodos con fechas explícitas, por ejemplo `Semanal: 2026-11-02 a 2026-11-08`, se interpretan por sus fechas. También se admiten los textos históricos con prefijo Manual y fechas explícitas.
+- Un período desconocido o inválido no se considera vigente. No se inventan fechas.
 
-El texto ocupa 32 caracteres y cabe en el campo existente de 100. Un resultado con
-el mismo producto y el mismo período identifica una semana ya completada.
+Se toma siempre la última predicción de cada producto, ordenando por fechaPrediccion e idPrediccion descendentes. Una anterior no recupera vigencia si la última vence. No se distingue el origen manual o automático para decidir la prioridad. Cada generación inserta un registro nuevo y conserva el historial completo.
 
-Los datos anteriores no se modifican. Textos como `Próximos 7 días` no demuestran
-qué semana se predijo, especialmente si hubo una recuperación durante la semana:
-no se infieren fechas ni origen. Un resultado anterior que ya tenga exactamente
-el identificador semanal de fechas sí evita repetir esa semana. Cuando sólo
-existen registros ambiguos, la primera pasada puede guardar un nuevo resultado
-explícito para esa semana; no elimina ni reclasifica los anteriores.
+La automática usa el lunes como referencia para determinar si corresponde generar esa semana. Si una predicción cubría ese lunes y vence el miércoles, las revisiones del jueves o viernes no la reemplazan; espera al siguiente cierre del domingo. Sin predicción o con una vencida antes del lunes, puede generar la semana pendiente.
 
-## Coordinación y conexiones
+## Programación y coordinación
 
-Antes de calcular se obtiene `pg_try_advisory_xact_lock(71324, id_producto)`.
-El bloqueo es transaccional y no agrega estructura a la base. Si otro proceso
-lo tiene, la pasada automática omite ese producto y el pedido manual devuelve 409.
-Después de obtenerlo, sólo la automática comprueba el período semanal guardado.
-Los pedidos manuales no se consideran una semana completada ni se deduplican por
-el texto `Próximos N días`.
+El servidor revisa pendientes al arrancar y cada 30 minutos. Inicia la nueva semana en la primera revisión posterior a las 00:00 del lunes, hora argentina; debe estar encendido. Si vuelve a mitad de semana, calcula la semana vigente con el historial hasta el domingo cerrado, sin incorporar ventas posteriores. No recupera semanas ya terminadas.
 
-**Se mantiene una conexión del pool durante lectura, entrenamiento y guardado.**
-Es necesario para que el bloqueo transaccional proteja toda la operación sin
-tabla de reservas ni conexión dedicada. Usa un hilo de XGBoost y procesa los
-productos secuencialmente. Commit, rollback o desconexión liberan el bloqueo;
-no quedan reservas durables de 30 minutos. La conexión se devuelve o descarta al
-terminar, también ante errores de rollback o cierre del cursor.
+`PREDICTIONS_WEEKLY_ENABLED=false` desactiva el proceso automático. `main:app` y `server:app` conservan la misma aplicación protegida.
 
-Sin tabla de ejecuciones no hay historial durable de intentos ni estado
-`Sin datos` por semana. Los productos sin datos o con errores se vuelven a probar
-en la siguiente revisión, mientras que las semanas guardadas no se repiten.
+Antes de calcular se obtiene `pg_try_advisory_xact_lock(71324, id_producto)`. La automática vuelve a comprobar la última predicción dentro del bloqueo. Si otro proceso lo tiene, omite ese producto; el pedido manual devuelve 409. El pedido manual puede reemplazar una predicción vigente insertando otra nueva.
 
-## Algoritmo y consultas
+Se mantiene una conexión del pool durante lectura, entrenamiento y guardado para que el bloqueo transaccional proteja toda la operación. Commit, rollback o desconexión liberan el bloqueo; los recursos se devuelven también ante errores de limpieza. No se usa una tabla de reservas. Los productos sin historial suficiente o con errores se reintentan en la siguiente revisión.
 
-`funciones/predicciones.py` conserva `SolicitudPrediccion` como modelo
-interno y `generar_prediccion` con el cálculo original del commit
-`dc6bb9eb7fbba72505aeecda3da714bd4c7dd427`: nombres, seis comentarios, preparación,
-variables de entrenamiento, parámetros de XGBoost, recursión, límite inferior
-cero, total con `ceil` y redondeo diario. No hay otro algoritmo.
+## Cálculo y recomendaciones
 
-Las adaptaciones son el domingo como fecha de referencia, el corte SQL
-`v.fecha <= fecha_historial`, el bloqueo y la identificación del período antes
-de guardar. La comprobación final de producto activo se conserva. El cálculo
-recursivo se ejecuta exactamente siete veces para la semanal o N para el pedido manual, desde el día siguiente al corte.
+La ruta manual de main.py y la automática usan generar_prediccion en funciones/predicciones.py. Se conserva el bloque original de preparación de datos, parámetros XGBoost, cálculo recursivo, límite inferior cero, total con ceil y redondeo diario. La manual incluye hoy en el historial; la automática usa el domingo cerrado. Se necesitan al menos 14 días con ventas y suficientes filas de entrenamiento.
 
-`main.py` conserva la ruta manual y delega en el mismo cálculo que usa la semanal. Recupera textualmente las funciones
-originales `consultar_analisis_producto` y `generar_recomendaciones`.
-Recomendaciones toma la última predicción por `fechaPrediccion DESC,
-idPrediccion DESC`, sin filtrar origen ni exigir vigencia. Si falta, conserva
-las ventas de los últimos 30 días y la fórmula original de reposición.
-Generar recomendaciones no entrena ni genera una predicción.
+Las recomendaciones usan la última predicción únicamente si está vigente. Si falta, venció o tiene un horizonte no interpretable, usan las ventas de los últimos 30 días, manteniendo la fórmula existente de reposición. No recuperan una predicción anterior. Generar recomendaciones no entrena el modelo ni genera una predicción nueva; no se modifican automáticamente las recomendaciones pendientes.
 
-## Cambios intencionales de API
+## API
 
-- Se recupera `POST /predicciones/{id_producto}/generar` y `SolicitudPrediccion`
-  con la validación original 1–30 y su conversión normal de Pydantic. Administrador
-  y Encargado pueden generar; Vendedor recibe 403 y una llamada sin sesión 401.
-  Se conservan los campos de respuesta originales: mensaje, IDs, nombre del
-  producto, período, cantidad estimada y predicciones diarias. Si el producto está
-  ocupado se devuelve 409. No se reincorpora el formulario de Flutter.
-- `GET /predicciones/` conserva la consulta protegida de la última predicción
-  guardada por producto y sus siete campos básicos. Ya no devuelve `origen`,
-  `fechaDesde` o `fechaHasta` desde el registro auxiliar.
-- `GET /productos/{id_producto}/analisis` vuelve a la respuesta original del
-  historial, sin esos tres metadatos adicionales. Conserva todos los resultados.
-- El dashboard muestra el período guardado. Puede reconocer el prefijo semanal
-  del texto para presentarlo, sin suponer fechas de resultados ambiguos.
-- Se mantienen las demás rutas, autenticación, usuarios y permisos. Quedan
-  **31 rutas y 35 operaciones** al recuperar la ruta original manual.
+- `POST /predicciones/{id_producto}/generar`: conserva el cuerpo `{"diasPrediccion": N}`, validación 1–30 y respuesta original con IDs, producto, período, total y prediccionesDiarias. Requiere Administrador o Encargado de stock.
+- `GET /predicciones/`: conserva la última por producto y los campos anteriores; agrega fechaDesde, fechaHasta, esActual y vigente calculados al consultar.
+- `GET /productos/{id_producto}/analisis`: conserva todo el historial y agrega esos mismos campos calculados. Solo la última puede estar vigente.
+- No se devuelven esAutomatica ni origen. Las fechas calculadas no son columnas nuevas.
 
-## Primera etapa y verificación
+La base solo guarda el total del horizonte. El desglose diario se devuelve al generar, pero no se conserva; no se agregó un gráfico de predicción diaria.
 
-**Etapa posterior completada el 30/10/2026:** la tabla auxiliar fue eliminada
-sin CASCADE, después de verificar que sus 13 registros coincidían con el respaldo
-completo. Se conservaron las 11 predicciones guardadas y el esquema de las demás
-tablas. Se comprobaron las consultas reales de predicciones y análisis de producto.
-El respaldo se encuentra fuera del repositorio, en `respaldos-stockia/2026-10-30_12-26-19`.
+## Configuración y alcance de V3
 
-Se verifican entrenamiento y redondeo originales, semana y cambio de año,
-recuperación, duplicados, bloqueo ocupado, errores de lectura y guardado con
-pool de una conexión, limpieza, cierre y arranque sin preparar tablas de
-predicciones. Flutter verifica consulta y navegación en móvil y escritorio,
-sin formulario ni peticiones manuales.
+Se trasladaron las funciones probadas en la copia local al repositorio original, conservando su configuración de conexión externa y sus comandos de arranque. No se trasladaron PostgreSQL local, credenciales de pruebas, puertos 8001/5174 ni scripts de preparación local. La configuración de database.py queda igual que en V2; no se ejecuta ninguna migración al desplegar esta versión.
 
-El recorrido real usa tablas temporales originales y rollback: XGBoost comparado
-con el original sobre las mismas ventas, bloqueo frente a otra conexión,
-repetición de la pasada sin duplicados, historial, última predicción del dashboard
-y recomendaciones sin nuevo entrenamiento. No se crea una tabla temporal de
-ejecuciones ni se escribe en las tablas reales.
+Se mantienen los permisos de ventas anteriores: el Vendedor registra y el Administrador consulta el historial. El cambio para permitir ventas al Administrador fue cancelado y no se incluye.
 
-El documento [AJUSTE_PREDICCIONES_ORIGINAL.md](AJUSTE_PREDICCIONES_ORIGINAL.md)
-describe la extracción anterior; este documento establece el comportamiento
-vigente: automática más ruta manual del backend recuperada, sin formulario ni tabla auxiliar.
-
-Verificación de esta etapa: 104 pruebas de backend y 247 de Flutter aprobadas; análisis estático de Flutter sin problemas. Sin commit ni push.
-
-## Recuperación de la ruta manual
-
-Se verificaron 106 pruebas del backend, incluyendo permisos y validación de 1 a
-30 días. Con PostgreSQL y XGBoost reales, los pedidos 1/14/30 se compararon contra
-la función original sobre las mismas ventas mediante tablas temporales y rollback.
-La automática y su protección entre procesos se verificaron en el mismo recorrido.
-No se escribieron predicciones reales ni se modificó el frontend en esta recuperación.
-Recomendaciones conserva la regla original de tomar la última predicción guardada,
-incluida una manual si es la más reciente; no se cambió esa regla.
-
-## Archivo único de predicciones
-
-La consulta GET, el cálculo y la programación semanal están reunidos en `backend/funciones/predicciones.py`. Se conservaron las funciones, clases, reglas y rutas; sólo cambian su ubicación e imports. No se agregaron tablas ni dependencias.
+Los documentos de extracciones y auditorías anteriores describen etapas históricas; este documento establece el comportamiento vigente.

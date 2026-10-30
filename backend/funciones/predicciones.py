@@ -28,6 +28,39 @@ def periodo_semanal(fecha_historial):
     return f"Semanal: {fecha_historial + timedelta(days=1)} a {fecha_historial + timedelta(days=7)}"
 
 
+def fechas_periodo(fecha_prediccion, periodo):
+    """Obtiene la vigencia del horizonte existente, sin modificar la tabla."""
+    import re
+    from datetime import date
+    if not isinstance(fecha_prediccion, date) or not isinstance(periodo, str):
+        return None
+    if isinstance(fecha_prediccion, datetime):
+        fecha_prediccion = fecha_prediccion.date()
+    dias = re.fullmatch(r"Próximos ([0-9]+) días", periodo)
+    if dias:
+        cantidad = int(dias[1])
+        if 1 <= cantidad <= 30:
+            return fecha_prediccion + timedelta(days=1), fecha_prediccion + timedelta(days=cantidad)
+        return None
+    fechas = re.fullmatch(r"(?:Semanal|Manual): ([0-9]{4}-[0-9]{2}-[0-9]{2}) a ([0-9]{4}-[0-9]{2}-[0-9]{2})", periodo)
+    if fechas:
+        try:
+            desde, hasta = date.fromisoformat(fechas[1]), date.fromisoformat(fechas[2])
+            if desde <= hasta:
+                return desde, hasta
+        except ValueError:
+            pass
+    return None
+
+
+def datos_vigencia(fecha_prediccion, periodo, *, actual=True):
+    fechas = fechas_periodo(fecha_prediccion, periodo)
+    return {"fechaDesde": fechas[0] if fechas else None,
+            "fechaHasta": fechas[1] if fechas else None,
+            "esActual": actual,
+            "vigente": actual and fechas is not None and fechas[1] >= business_today()}
+
+
 class SolicitudPrediccion(BaseModel):
     diasPrediccion: int = Field(ge=1, le=30)
 
@@ -74,10 +107,14 @@ def generar_prediccion(
                 return None
             raise HTTPException(409, "Ya se está generando una predicción para este producto. Intentá nuevamente en unos momentos.")
         if es_semanal:
-            cursor.execute("""SELECT 1 FROM "PREDICCION_DEMANDA"
-                WHERE "idProducto" = %s AND "periodoPrediccion" = %s LIMIT 1""",
-                (id_producto, periodo_automatico))
-            if cursor.fetchone():
+            cursor.execute("""SELECT "fechaPrediccion", "periodoPrediccion"
+                FROM "PREDICCION_DEMANDA" WHERE "idProducto" = %s
+                ORDER BY "fechaPrediccion" DESC, "idPrediccion" DESC LIMIT 1""",
+                (id_producto,))
+            ultima = cursor.fetchone()
+            fechas = fechas_periodo(*ultima) if ultima else None
+            # Si estaba vigente al comenzar la semana, espera al próximo cierre.
+            if fechas and fechas[1] >= fecha_historial + timedelta(days=1):
                 return None
 
         # Verifica el producto
@@ -299,11 +336,15 @@ def consultar_predicciones():
                 INNER JOIN PRODUCTO p ON p."idProducto" = d."idProducto"
                 ORDER BY d."fechaPrediccion" DESC, d."idPrediccion" DESC
             ''')
-            predictions = [dict(zip(
-                ['idPrediccion', 'idProducto', 'nombreProducto', 'activo',
-                 'fechaPrediccion', 'periodoPrediccion', 'cantidadEstimada'],
-                [*row[:6], float(row[6]), *row[7:]],
-            )) for row in cursor.fetchall()]
+            predictions = []
+            for row in cursor.fetchall():
+                prediction = dict(zip(
+                    ['idPrediccion', 'idProducto', 'nombreProducto', 'activo',
+                     'fechaPrediccion', 'periodoPrediccion', 'cantidadEstimada'],
+                    [*row[:6], float(row[6])],
+                ))
+                prediction.update(datos_vigencia(row[4], row[5]))
+                predictions.append(prediction)
         return {'predicciones': predictions, 'cantidad': len(predictions)}
     except Exception:
         raise HTTPException(status_code=500, detail='No se pudieron consultar las predicciones guardadas.') from None
@@ -327,11 +368,19 @@ def weekly_batch(*, stop=lambda: False, today=None):
     monday = today - timedelta(days=today.weekday())
     domingo_cerrado = monday - timedelta(days=1)
     with transaction() as cursor:
-        cursor.execute('''SELECT p."idProducto" FROM PRODUCTO p WHERE p.activo = TRUE
-            AND NOT EXISTS (SELECT 1 FROM "PREDICCION_DEMANDA" d
-                WHERE d."idProducto" = p."idProducto" AND d."periodoPrediccion" = %s)
-            ORDER BY p."idProducto"''', (periodo_semanal(domingo_cerrado),))
-        products = [row[0] for row in cursor.fetchall()]
+        cursor.execute("""SELECT p."idProducto", ultima."fechaPrediccion", ultima."periodoPrediccion"
+            FROM PRODUCTO p
+            LEFT JOIN LATERAL (
+                SELECT "fechaPrediccion", "periodoPrediccion" FROM "PREDICCION_DEMANDA" d
+                WHERE d."idProducto" = p."idProducto"
+                ORDER BY "fechaPrediccion" DESC, "idPrediccion" DESC LIMIT 1
+            ) ultima ON TRUE
+            WHERE p.activo = TRUE ORDER BY p."idProducto" """)
+        products = []
+        for product_id, fecha, periodo in cursor.fetchall():
+            fechas = fechas_periodo(fecha, periodo)
+            if fechas is None or fechas[1] < monday:
+                products.append(product_id)
     for product_id in products:
         if stop():
             break
